@@ -502,9 +502,10 @@ impl LongPortConnector {
     }
 
     fn on_quote(&self, symbol: &str, q: PushQuote) {
-        // Update OHLC + last_done + trade_status on the snapshot (or a separate
-        // QuoteStats struct attached to the snapshot — TBD during impl).
-        // Used for the top-bar ticker + status indicator.
+        // Store OHLC + last_done + trade_status as a QuoteStats struct in the
+        // SnapshotStore (per-symbol). Used for the top-bar ticker + status
+        // indicator. The QuoteStats surfaces as `quote_stats: Option<QuoteStatsDto>`
+        // on the polled SnapshotDto.
     }
 }
 ```
@@ -755,6 +756,87 @@ pub struct SnapshotDto {
     pub quote_stats: Option<QuoteStatsDto>, // OHLC + last_done + trade_status
 }
 
+#[derive(Serialize, Clone)]
+pub struct QuoteStatsDto {
+    pub last_done: Decimal,
+    pub open: Decimal,
+    pub high: Decimal,
+    pub low: Decimal,
+    pub volume: i64,
+    pub turnover: Decimal,
+    pub trade_status: TradeStatusDto,     // e.g. Normal / Halted / Closing
+    pub timestamp: i64,                   // epoch millis
+}
+
+#[derive(Serialize, Clone)]
+pub struct BookItemDto {
+    pub price: Decimal,
+    pub size: Decimal,
+    pub cumulative_size: Decimal,
+    pub is_bid: bool,
+    pub broker_ids: Vec<i32>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct StudyValueDto {
+    pub name: String,
+    pub value: Decimal,
+    pub format: String,
+    pub value_color: String,
+    pub tooltip: String,
+    pub has_error: bool,
+    pub is_stale: bool,
+    pub timestamp: i64,                   // epoch millis
+}
+
+#[derive(Serialize, Clone)]
+pub struct TradeDto {
+    pub price: Decimal,
+    pub size: Decimal,
+    pub timestamp: i64,                   // epoch millis
+    pub direction: TradeDirectionDto,      // Neutral / Down / Up
+    pub trade_type: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ProviderDto {
+    pub id: i32,
+    pub name: String,
+    pub status: SessionStatusDto,
+}
+
+#[derive(Serialize, Clone)]
+pub struct StudyDescriptorDto {
+    pub plugin_id: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub plugin_type: PluginTypeDto,
+    pub status: PluginStatusDto,
+    pub emits_metric: bool,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SettingsDto {
+    pub app_key: String,
+    pub app_secret: String,               // masked in non-edit responses
+    pub access_token: String,
+    pub default_symbols: Vec<String>,
+    pub depth_levels: usize,
+    pub aggregation_level: AggregationLevelDto,
+    pub log_level: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct NotificationPayload {
+    pub source: String,                    // plugin name or "TriggerEngine"
+    pub message: String,
+    pub level: NotificationLevelDto,       // Info / Warning / Error
+    pub category: NotificationCategoryDto, // Plugin / TriggerEngine / System
+    pub timestamp: i64,
+    pub exception: Option<String>,
+}
+
 // Decimal → string (rust_decimal serializes as string by default to preserve precision;
 // Svelte parses to number for display). OffsetDateTime → epoch millis (i64).
 ```
@@ -821,15 +903,15 @@ If the connector fails to start (bad token, network), `PluginStatus::StoppedFail
 ### Project layout
 
 ```
-rushhft-app/
-├── Cargo.toml
-├── tauri.conf.json
-├── src-tauri/
+rushhft-app/                              # workspace member dir
+├── src-tauri/                            # Tauri binary crate (this is `rushhft-app` in the workspace)
 │   ├── Cargo.toml
 │   ├── build.rs
 │   ├── tauri.conf.json
-│   └── src/main.rs
-└── ui/                                 # Svelte 5 SPA
+│   ├── icons/
+│   └── src/
+│       └── main.rs
+└── ui/                                   # Svelte 5 SPA (separate from Rust)
     ├── package.json
     ├── vite.config.ts
     ├── svelte.config.js
@@ -1084,7 +1166,7 @@ Dark-first, tokens matching the mockup:
 ### Tauri
 
 - `tauri-cli` 2.x (`cargo install tauri-cli --version "^2"`)
-- `tauri.conf.json` with `app.securityGuild = null`, `app.withGlobalTauri = false`
+- `tauri.conf.json` lives at `rushhft-app/src-tauri/tauri.conf.json` (Tauri 2 convention). `frontendDist = "../ui/build"`, `devUrl = "http://localhost:5173"`, `beforeBuildCommand = "pnpm build"`, `beforeDevCommand = "pnpm dev"`.
 - macOS: `app.macos_minimum_system_version = "11.0"`
 - Code signing: defer to a release-engineering pass (MVP ships unsigned `.app`)
 
