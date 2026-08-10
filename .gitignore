@@ -1,0 +1,28 @@
+# Superpowers brainstorming artifacts (visual mockups, server state)
+.superpowers/
+
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Node / pnpm
+node_modules/
+rushhft-app/ui/build/
+rushhft-app/ui/.svelte-kit/
+*.log
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Tauri
+rushhft-app/src-tauri/target/
+rushhft-app/src-tauri/gen/
+
+# Env
+.env
+.env.local
