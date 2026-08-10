@@ -1,0 +1,23 @@
+[package]
+name = "rushhft-core"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[dependencies]
+rust_decimal = "1"
+rust_decimal_macros = "1"
+time = { version = "0.3", features = ["serde-human-readable", "formatting", "macros"] }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+async-trait = "0.1"
+tracing = "0.1"
+thiserror = "1"
+dashmap = "6"
+arc-swap = "1"
+crossbeam-queue = "0.3"
+dirs = "5"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[dev-dependencies]
+serde_json = "1"
