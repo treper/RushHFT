@@ -28,8 +28,7 @@ impl Default for Settings {
 
 impl Settings {
     pub fn config_dir() -> std::path::PathBuf {
-        let mut path = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let mut path = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
         path.push("RushHFT");
         path
     }
@@ -45,8 +44,8 @@ impl Settings {
         }
         let content = std::fs::read_to_string(&path)
             .map_err(|e| SettingsError::ReadFailed(path.clone(), e.to_string()))?;
-        let settings: Settings = toml::from_str(&content)
-            .map_err(|e| SettingsError::ParseFailed(e.to_string()))?;
+        let settings: Settings =
+            toml::from_str(&content).map_err(|e| SettingsError::ParseFailed(e.to_string()))?;
         Ok(settings)
     }
 

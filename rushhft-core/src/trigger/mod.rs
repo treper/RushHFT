@@ -131,8 +131,8 @@ pub struct TriggerEngine {
     action_last_fired_times: dashmap::DashMap<String, OffsetDateTime>,
     metric_tx: mpsc::UnboundedSender<MetricEvent>,
     metric_rx: tokio::sync::Mutex<Option<mpsc::UnboundedReceiver<MetricEvent>>>,
-    on_trigger_fired:
-        Arc<arc_swap::ArcSwap<Vec<Arc<dyn Fn(TriggerFiredEventArgs) + Send + Sync>>>>,
+    #[allow(clippy::type_complexity)]
+    on_trigger_fired: Arc<arc_swap::ArcSwap<Vec<Arc<dyn Fn(TriggerFiredEventArgs) + Send + Sync>>>>,
 }
 
 impl TriggerEngine {
@@ -230,8 +230,7 @@ impl TriggerEngine {
                     if self.is_in_cooldown(&akey, event.timestamp, action.cooldown()) {
                         continue;
                     }
-                    self.action_last_fired_times
-                        .insert(akey, event.timestamp);
+                    self.action_last_fired_times.insert(akey, event.timestamp);
                     let args = TriggerFiredEventArgs {
                         rule: rule.clone(),
                         metric_event: event.clone(),
@@ -288,7 +287,7 @@ impl TriggerEngine {
                     let start = match self.condition_start_times.get(&ckey) {
                         Some(s) => *s.value(),
                         None => {
-                            drop(self.condition_start_times.insert(ckey.clone(), current_ts));
+                            let _ = self.condition_start_times.insert(ckey.clone(), current_ts);
                             return false;
                         }
                     };
@@ -305,22 +304,13 @@ impl TriggerEngine {
         true
     }
 
-    fn evaluate_condition(
-        &self,
-        cond: &TriggerCondition,
-        current: Decimal,
-        prev: Decimal,
-    ) -> bool {
+    fn evaluate_condition(&self, cond: &TriggerCondition, current: Decimal, prev: Decimal) -> bool {
         match cond.operator {
             ConditionOperator::Equals => current == cond.threshold,
             ConditionOperator::GreaterThan => current > cond.threshold,
             ConditionOperator::LessThan => current < cond.threshold,
-            ConditionOperator::CrossesAbove => {
-                prev <= cond.threshold && current > cond.threshold
-            }
-            ConditionOperator::CrossesBelow => {
-                prev >= cond.threshold && current < cond.threshold
-            }
+            ConditionOperator::CrossesAbove => prev <= cond.threshold && current > cond.threshold,
+            ConditionOperator::CrossesBelow => prev >= cond.threshold && current < cond.threshold,
         }
     }
 
@@ -332,8 +322,7 @@ impl TriggerEngine {
     ) -> bool {
         if let Some(last) = self.action_last_fired_times.get(key) {
             let elapsed = now - *last.value();
-            let elapsed_dur =
-                std::time::Duration::from_secs(elapsed.whole_seconds().max(0) as u64);
+            let elapsed_dur = std::time::Duration::from_secs(elapsed.whole_seconds().max(0) as u64);
             return elapsed_dur < cooldown;
         }
         false
@@ -352,7 +341,7 @@ impl TriggerEngine {
         let snapshots: Vec<(String, (Decimal, OffsetDateTime))> = self
             .last_metric_values
             .iter()
-            .map(|e| (e.key().clone(), e.value().clone()))
+            .map(|e| (e.key().clone(), *e.value()))
             .collect();
         for (key, (value, ts)) in snapshots {
             let parts: Vec<&str> = key.split('|').collect();
@@ -846,10 +835,7 @@ mod tests {
         assert_eq!(back.name, "VPIN alert");
         assert!(back.is_enabled);
         assert_eq!(back.conditions.len(), 1);
-        assert_eq!(
-            back.conditions[0].operator,
-            ConditionOperator::GreaterThan
-        );
+        assert_eq!(back.conditions[0].operator, ConditionOperator::GreaterThan);
         assert_eq!(back.conditions[0].threshold, dec!(0.7));
         assert!(back.conditions[0].window.is_some());
         assert_eq!(back.actions.len(), 1);

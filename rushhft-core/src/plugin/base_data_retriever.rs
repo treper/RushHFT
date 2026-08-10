@@ -1,8 +1,8 @@
 use crate::plugin::{PluginContext, PluginError};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 type BoxFuture<'a> = Pin<Box<dyn Future<Output = Result<(), PluginError>> + Send + 'a>>;
@@ -155,10 +155,25 @@ mod tests {
         async fn publish_order_book(&self, _: OrderBook) {}
         async fn publish_trade(&self, _: Trade) {}
         async fn publish_provider(&self, _: Provider) {}
-        async fn register_metric(&self, _: &str, _: &str, _: &str, _: &str, _: Decimal, _: OffsetDateTime) {}
-        fn order_book_hub(&self) -> Arc<OrderBookHub> { Arc::new(OrderBookHub::new()) }
-        fn trade_hub(&self) -> Arc<TradeHub> { Arc::new(TradeHub::new()) }
-        fn provider_hub(&self) -> Arc<ProviderHub> { Arc::new(ProviderHub::new()) }
+        async fn register_metric(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: Decimal,
+            _: OffsetDateTime,
+        ) {
+        }
+        fn order_book_hub(&self) -> Arc<OrderBookHub> {
+            Arc::new(OrderBookHub::new())
+        }
+        fn trade_hub(&self) -> Arc<TradeHub> {
+            Arc::new(TradeHub::new())
+        }
+        fn provider_hub(&self) -> Arc<ProviderHub> {
+            Arc::new(ProviderHub::new())
+        }
     }
 
     #[tokio::test]
@@ -181,7 +196,10 @@ mod tests {
             BaseDataRetriever::new(5, Duration::from_millis(1), Duration::from_millis(10));
         let counter = Arc::new(AtomicU32::new(0));
         let f = make_internal_start(2, counter);
-        retriever.start_with_reconnect(Arc::new(MockCtx), f).await.unwrap();
+        retriever
+            .start_with_reconnect(Arc::new(MockCtx), f)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -204,7 +222,10 @@ mod tests {
         retriever.is_reconnecting.store(true, Ordering::Relaxed);
         let counter = Arc::new(AtomicU32::new(0));
         let f = make_internal_start(0, counter.clone());
-        retriever.start_with_reconnect(Arc::new(MockCtx), f).await.unwrap();
+        retriever
+            .start_with_reconnect(Arc::new(MockCtx), f)
+            .await
+            .unwrap();
         assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 }

@@ -1,6 +1,6 @@
 use crate::model::book_item::BookItem;
-use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone)]
@@ -153,9 +153,7 @@ impl OrderBook {
         if let Some(pos) = side.iter().position(|l| l.price == price) {
             let removed = side.remove(pos);
             self.deleted_levels += 1;
-            let scaled = (removed.size * Decimal::from(scale))
-                .to_i64()
-                .unwrap_or(0);
+            let scaled = (removed.size * Decimal::from(scale)).to_i64().unwrap_or(0);
             self.deleted_volume_scaled += scaled as u64;
 
             self.compute_cumulative_sizes();

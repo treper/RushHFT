@@ -3,7 +3,7 @@ use crate::model::provider::Provider;
 use crate::model::trade::Trade;
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 type Subscriber<T> = Arc<dyn Fn(&T) + Send + Sync>;
@@ -128,9 +128,10 @@ impl TradeHub {
         let symbol = t.symbol.clone();
         self.latest
             .entry(symbol.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(t.clone());
 
+        #[allow(clippy::collapsible_if)]
         if let Some(mut entry) = self.latest.get_mut(&symbol) {
             if entry.len() > 200 {
                 let drain_from = entry.len() - 200;

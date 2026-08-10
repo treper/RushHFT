@@ -21,7 +21,7 @@ impl<T: Default + Clone + Send + Sync> ObjectPool<T> {
     }
 
     pub fn get(&self) -> PoolGuard<T> {
-        let item = self.queue.pop().unwrap_or_else(T::default);
+        let item = self.queue.pop().unwrap_or_default();
         PoolGuard {
             queue: self.queue.clone(),
             item: Some(item),
@@ -37,6 +37,10 @@ impl<T: Default + Clone + Send + Sync> ObjectPool<T> {
 
     pub fn len(&self) -> usize {
         self.queue.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
     }
 }
 
