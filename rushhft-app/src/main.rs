@@ -1,0 +1,3 @@
+fn main() {
+    println!("RushHFT placeholder — real main lands in Task 11");
+}
