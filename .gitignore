@@ -22,6 +22,7 @@ rushhft-app/ui/.svelte-kit/
 # Tauri
 rushhft-app/src-tauri/target/
 rushhft-app/src-tauri/gen/
+rushhft-app/gen/
 
 # Env
 .env

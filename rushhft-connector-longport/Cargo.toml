@@ -1,0 +1,21 @@
+[package]
+name = "rushhft-connector-longport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rushhft-core = { path = "../rushhft-core" }
+longport = { path = "../../openapi/rust" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+async-trait = "0.1"
+rust_decimal = "1"
+time = { version = "0.3", features = ["serde-human-readable"] }
+dashmap = "6"
+arc-swap = "1"
+thiserror = "1"
+tracing = "0.1"
+
+[dev-dependencies]
+rust_decimal_macros = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
