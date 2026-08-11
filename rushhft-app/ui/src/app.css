@@ -2,8 +2,9 @@
   --bg: #0d1117;
   --panel: #161b22;
   --border: #30363d;
-  --bid: #7ee787;
-  --ask: #f85149;
+  /* 红涨绿跌 (A-share convention): bids/Up → red, asks/Down → green */
+  --bid: #f85149;
+  --ask: #7ee787;
   --accent: #58a6ff;
   --muted: #8b949e;
 }

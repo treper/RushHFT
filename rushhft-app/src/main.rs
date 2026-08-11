@@ -35,6 +35,23 @@ async fn main() {
         // the first HTTP/WS request.
         unsafe { std::env::set_var("LONGPORT_REGION", &loaded.region) };
     }
+
+    // On macOS the user may have a system-level HTTP/HTTPS/SOCKS proxy
+    // configured in System Preferences but no HTTP_PROXY/HTTPS_PROXY env
+    // vars exported in the shell. reqwest (and the LongPort SDK's HTTP
+    // client) only read env vars, not the macOS system proxy. Read the
+    // system proxy via `scutil --proxy` and inject the env vars so the
+    // HTTP calls (get_otp, REST quotes) and the wsclient's new CONNECT
+    // tunnel path both route through the proxy.
+    //
+    // Only runs on macOS; on other platforms this is a no-op.
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = inject_macos_system_proxy() {
+            tracing::warn!(error = %e, "failed to read macOS system proxy");
+        }
+    }
+
     let settings = Arc::new(RwLock::new(loaded));
 
     let ob_hub = Arc::new(OrderBookHub::new());
@@ -146,4 +163,79 @@ async fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running RushHFT");
+}
+
+/// Parse `scutil --proxy` output and inject `HTTP_PROXY`/`HTTPS_PROXY` env
+/// vars from the macOS system proxy configuration, but only if the user has
+/// not already exported them. Returns Ok(()) if scutil could be run (even if
+/// no proxy is configured); Err only on spawn/read failure.
+///
+/// SAFETY: env::set_var is called before any connector or worker task is
+/// spawned, so no other thread is reading these vars concurrently.
+#[cfg(target_os = "macos")]
+fn inject_macos_system_proxy() -> Result<(), Box<dyn std::error::Error>> {
+    let output = std::process::Command::new("scutil")
+        .arg("--proxy")
+        .output()?;
+    if !output.status.success() {
+        return Err(format!("scutil --proxy exited {}", output.status).into());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let http_proxy = extract_scutil_field(&stdout, "HTTPEnable", "HTTPProxy", "HTTPPort");
+    let https_proxy = extract_scutil_field(&stdout, "HTTPSEnable", "HTTPSProxy", "HTTPSPort");
+
+    // SAFETY: runs once at process startup before any other thread could be
+    // reading these env vars. The LongPort SDK's HTTP client (reqwest with
+    // system-proxy feature) reads these lazily on the first HTTP request,
+    // and the wsclient reads HTTPS_PROXY inside do_connect per connection.
+    unsafe {
+        if std::env::var("HTTP_PROXY").is_err() {
+            if let Some(p) = http_proxy {
+                std::env::set_var("HTTP_PROXY", p);
+            }
+        }
+        if std::env::var("HTTPS_PROXY").is_err() {
+            if let Some(p) = https_proxy {
+                std::env::set_var("HTTPS_PROXY", p);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Parse scutil output: returns `http://<host>:<port>` if `<enable_key> : 1`
+/// and both `<host_key>` and `<port_key>` are present.
+#[cfg(target_os = "macos")]
+fn extract_scutil_field(output: &str, enable_key: &str, host_key: &str, port_key: &str) -> Option<String> {
+    let enabled = output
+        .lines()
+        .find_map(|l| {
+            let l = l.trim();
+            let mut parts = l.split(':');
+            let k = parts.next()?.trim();
+            let v = parts.next()?.trim();
+            if k == enable_key {
+                Some(v == "1")
+            } else {
+                None
+            }
+        })?;
+    if !enabled {
+        return None;
+    }
+    let host = output.lines().find_map(|l| {
+        let l = l.trim();
+        let mut parts = l.split(':');
+        let k = parts.next()?.trim();
+        let v = parts.next()?.trim();
+        if k == host_key { Some(v.to_string()) } else { None }
+    })?;
+    let port = output.lines().find_map(|l| {
+        let l = l.trim();
+        let mut parts = l.split(':');
+        let k = parts.next()?.trim();
+        let v = parts.next()?.trim();
+        if k == port_key { Some(v.to_string()) } else { None }
+    })?;
+    Some(format!("http://{}:{}", host, port))
 }
