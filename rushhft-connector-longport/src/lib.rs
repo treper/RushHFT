@@ -169,6 +169,41 @@ impl LongPortConnector {
         Self::on_depth_inner(&self.inner, symbol, d).await;
     }
 
+    pub async fn on_brokers(&self, symbol: &str, b: longport::quote::PushBrokers) {
+        Self::on_brokers_inner(&self.inner, symbol, b).await;
+    }
+
+    async fn on_brokers_inner(
+        inner: &Arc<Inner>,
+        symbol: &str,
+        b: longport::quote::PushBrokers,
+    ) {
+        let book_for_publish = {
+            let Some(mut book_ref) = inner.local_books.get_mut(symbol) else {
+                return; // No depth yet — brokers cannot be merged.
+            };
+            let book = book_ref.value_mut();
+            for broker_entry in b.ask_brokers {
+                let idx = (broker_entry.position as usize).saturating_sub(1);
+                if idx < book.asks.len() {
+                    book.asks[idx].broker_ids = broker_entry.broker_ids;
+                }
+            }
+            for broker_entry in b.bid_brokers {
+                let idx = (broker_entry.position as usize).saturating_sub(1);
+                if idx < book.bids.len() {
+                    book.bids[idx].broker_ids = broker_entry.broker_ids;
+                }
+            }
+            book.clone()
+        }; // book_ref (DashMap RefMut) dropped here — safe to await.
+
+        let ctx = { inner.ctx.lock().await.clone() };
+        if let Some(ctx) = ctx {
+            ctx.publish_order_book(book_for_publish).await;
+        }
+    }
+
     async fn on_depth_inner(
         inner: &Arc<Inner>,
         symbol: &str,
@@ -455,5 +490,142 @@ mod tests {
         // Published
         let published = ctx.published_obs.get("700.HK").unwrap();
         assert_eq!(published.bids.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn on_brokers_merges_broker_ids_into_existing_levels() {
+        use rust_decimal_macros::dec;
+        let c = test_connector();
+        let ctx = Arc::new(MockCtx::new());
+        c.inner
+            .ctx
+            .lock()
+            .await
+            .replace(ctx.clone() as Arc<dyn PluginContext>);
+
+        // First push a depth so the book exists.
+        c.on_depth(
+            "700.HK",
+            longport::quote::PushDepth {
+                asks: vec![longport::quote::Depth {
+                    position: 1,
+                    price: Some(dec!(100.60)),
+                    volume: 400,
+                    order_num: 4,
+                }],
+                bids: vec![longport::quote::Depth {
+                    position: 1,
+                    price: Some(dec!(100.55)),
+                    volume: 500,
+                    order_num: 5,
+                }],
+            },
+        )
+        .await;
+
+        // Now push brokers — position 1 → asks[0] / bids[0].
+        c.on_brokers(
+            "700.HK",
+            longport::quote::PushBrokers {
+                ask_brokers: vec![longport::quote::Brokers {
+                    position: 1,
+                    broker_ids: vec![1001, 1002],
+                }],
+                bid_brokers: vec![longport::quote::Brokers {
+                    position: 1,
+                    broker_ids: vec![2001, 2002, 2003],
+                }],
+            },
+        )
+        .await;
+
+        let book = c.local_book("700.HK").unwrap();
+        assert_eq!(book.asks[0].broker_ids, vec![1001, 1002]);
+        assert_eq!(book.bids[0].broker_ids, vec![2001, 2002, 2003]);
+    }
+
+    #[tokio::test]
+    async fn on_brokers_is_noop_when_no_depth_exists() {
+        let c = test_connector();
+        // No depth pushed yet.
+        c.on_brokers(
+            "700.HK",
+            longport::quote::PushBrokers {
+                ask_brokers: vec![longport::quote::Brokers {
+                    position: 1,
+                    broker_ids: vec![1001],
+                }],
+                bid_brokers: vec![],
+            },
+        )
+        .await;
+        assert!(c.local_book("700.HK").is_none());
+    }
+
+    #[tokio::test]
+    async fn on_depth_preserves_broker_ids_across_refresh() {
+        use rust_decimal_macros::dec;
+        let c = test_connector();
+        let ctx = Arc::new(MockCtx::new());
+        c.inner
+            .ctx
+            .lock()
+            .await
+            .replace(ctx.clone() as Arc<dyn PluginContext>);
+
+        // Depth + brokers.
+        c.on_depth(
+            "700.HK",
+            longport::quote::PushDepth {
+                asks: vec![longport::quote::Depth {
+                    position: 1,
+                    price: Some(dec!(100.60)),
+                    volume: 400,
+                    order_num: 4,
+                }],
+                bids: vec![longport::quote::Depth {
+                    position: 1,
+                    price: Some(dec!(100.55)),
+                    volume: 500,
+                    order_num: 5,
+                }],
+            },
+        )
+        .await;
+        c.on_brokers(
+            "700.HK",
+            longport::quote::PushBrokers {
+                ask_brokers: vec![longport::quote::Brokers {
+                    position: 1,
+                    broker_ids: vec![1001, 1002],
+                }],
+                bid_brokers: vec![],
+            },
+        )
+        .await;
+
+        // Second depth refresh at same price should preserve broker_ids.
+        c.on_depth(
+            "700.HK",
+            longport::quote::PushDepth {
+                asks: vec![longport::quote::Depth {
+                    position: 1,
+                    price: Some(dec!(100.60)),
+                    volume: 600, // volume changed
+                    order_num: 6,
+                }],
+                bids: vec![longport::quote::Depth {
+                    position: 1,
+                    price: Some(dec!(100.55)),
+                    volume: 500,
+                    order_num: 5,
+                }],
+            },
+        )
+        .await;
+
+        let book = c.local_book("700.HK").unwrap();
+        assert_eq!(book.asks[0].size, dec!(600)); // volume updated
+        assert_eq!(book.asks[0].broker_ids, vec![1001, 1002]); // brokers preserved
     }
 }
