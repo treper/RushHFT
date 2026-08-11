@@ -165,6 +165,14 @@ impl LongPortConnector {
         self.inner.local_books.get(symbol).map(|e| e.clone())
     }
 
+    /// Set the PluginContext. Used by tests and by the app's setup phase.
+    pub async fn set_context(
+        &self,
+        ctx: Arc<dyn rushhft_core::plugin::PluginContext>,
+    ) {
+        *self.inner.ctx.lock().await = Some(ctx);
+    }
+
     pub async fn on_depth(&self, symbol: &str, d: longport::quote::PushDepth) {
         Self::on_depth_inner(&self.inner, symbol, d).await;
     }
