@@ -82,6 +82,22 @@ impl From<longport::quote::PushQuote> for QuoteStats {
     }
 }
 
+/// Map a `longport::quote::TradeDirection` to the core `TradeDirection`.
+///
+/// Implemented as a free function rather than a `From` impl because the
+/// orphan rule forbids `impl From<ForeignType> for OtherForeignType` —
+/// neither `longport::quote::TradeDirection` nor `rushhft_core::TradeDirection`
+/// is defined in this crate.
+pub fn map_trade_direction(
+    d: longport::quote::TradeDirection,
+) -> rushhft_core::TradeDirection {
+    match d {
+        longport::quote::TradeDirection::Neutral => rushhft_core::TradeDirection::Neutral,
+        longport::quote::TradeDirection::Down => rushhft_core::TradeDirection::Down,
+        longport::quote::TradeDirection::Up => rushhft_core::TradeDirection::Up,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,5 +150,22 @@ mod tests {
         assert_eq!(stats.volume, 1_000_000);
         assert_eq!(stats.timestamp.unix_timestamp(), 1_700_000_000);
         assert!(stats.trade_status.contains("Normal"));
+    }
+
+    #[test]
+    fn trade_direction_mapping() {
+        use rushhft_core::TradeDirection;
+        assert_eq!(
+            map_trade_direction(longport::quote::TradeDirection::Up),
+            TradeDirection::Up
+        );
+        assert_eq!(
+            map_trade_direction(longport::quote::TradeDirection::Down),
+            TradeDirection::Down
+        );
+        assert_eq!(
+            map_trade_direction(longport::quote::TradeDirection::Neutral),
+            TradeDirection::Neutral
+        );
     }
 }
