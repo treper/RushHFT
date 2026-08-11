@@ -14,7 +14,7 @@ pub struct P2Quantile {
 impl P2Quantile {
     pub fn new(p: f64) -> Self {
         assert!(
-            (0.0..=1.0).contains(&p),
+            p > 0.0 && p < 1.0,
             "p must be in (0, 1)"
         );
         Self {
@@ -31,6 +31,9 @@ impl P2Quantile {
         self.count
     }
 
+    /// Returns the current quantile estimate. Before 5 observations, returns
+    /// the most-recent stored observation (NOT a true quantile — callers should
+    /// gate on `count() >= 5` if they need a statistically meaningful value).
     pub fn estimate(&self) -> f64 {
         if self.count < 5 {
             return if self.count == 0 {
@@ -155,6 +158,18 @@ mod tests {
         q.observe(f64::NEG_INFINITY);
         assert_eq!(q.count(), 0);
         assert_eq!(q.estimate(), 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "p must be in (0, 1)")]
+    fn new_rejects_p_zero() {
+        let _ = P2Quantile::new(0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "p must be in (0, 1)")]
+    fn new_rejects_p_one() {
+        let _ = P2Quantile::new(1.0);
     }
 
     #[test]
