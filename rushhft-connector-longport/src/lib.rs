@@ -98,6 +98,84 @@ pub fn map_trade_direction(
     }
 }
 
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+use dashmap::DashMap;
+use rushhft_core::plugin::BaseDataRetriever;
+
+#[allow(clippy::type_complexity)]
+#[allow(dead_code)]
+struct Inner {
+    settings: ConnectorSettings,
+    local_books: DashMap<String, rushhft_core::OrderBook>,
+    quote_stats: DashMap<String, QuoteStats>,
+    stop_flag: AtomicBool,
+    quote_ctx: tokio::sync::Mutex<Option<Arc<longport::QuoteContext>>>,
+    ctx: tokio::sync::Mutex<Option<Arc<dyn rushhft_core::plugin::PluginContext>>>,
+    status: arc_swap::ArcSwap<rushhft_core::PluginStatus>,
+}
+
+#[allow(dead_code)]
+pub struct LongPortConnector {
+    id: String,
+    version: String,
+    author: String,
+    description: String,
+    inner: Arc<Inner>,
+    base: BaseDataRetriever,
+}
+
+impl LongPortConnector {
+    pub fn new(settings: ConnectorSettings) -> Self {
+        let id = format!(
+            "{:x}",
+            fnv1a_64(&format!(
+                "LongPortConnector{}{}{}",
+                settings.provider_id, settings.app_key, settings.symbols.join(",")
+            ))
+        );
+        Self {
+            id,
+            version: "0.1.0".to_string(),
+            author: "RushHFT".to_string(),
+            description: "LongPort OpenAPI connector (HK/US equities)".to_string(),
+            inner: Arc::new(Inner {
+                settings,
+                local_books: DashMap::new(),
+                quote_stats: DashMap::new(),
+                stop_flag: AtomicBool::new(false),
+                quote_ctx: tokio::sync::Mutex::new(None),
+                ctx: tokio::sync::Mutex::new(None),
+                status: arc_swap::ArcSwap::from_pointee(rushhft_core::PluginStatus::Loaded),
+            }),
+            base: BaseDataRetriever::new_default(),
+        }
+    }
+
+    pub fn from_settings(s: &rushhft_core::Settings) -> Self {
+        Self::new(ConnectorSettings::from_settings(s))
+    }
+
+    pub fn quote_stats(&self, symbol: &str) -> Option<QuoteStats> {
+        self.inner.quote_stats.get(symbol).map(|e| e.clone())
+    }
+
+    pub fn local_book(&self, symbol: &str) -> Option<rushhft_core::OrderBook> {
+        self.inner.local_books.get(symbol).map(|e| e.clone())
+    }
+}
+
+/// FNV-1a 64-bit hash — stable, non-cryptographic identifier for plugin_id.
+fn fnv1a_64(s: &str) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in s.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,5 +245,29 @@ mod tests {
             map_trade_direction(longport::quote::TradeDirection::Neutral),
             TradeDirection::Neutral
         );
+    }
+
+    #[test]
+    fn connector_new_has_loaded_status() {
+        let c = LongPortConnector::new(ConnectorSettings::default());
+        assert_eq!(**c.inner.status.load(), rushhft_core::PluginStatus::Loaded);
+        assert!(!c.id.is_empty());
+        assert_eq!(c.version, "0.1.0");
+        assert_eq!(c.author, "RushHFT");
+    }
+
+    #[test]
+    fn connector_local_book_empty_initially() {
+        let c = LongPortConnector::new(ConnectorSettings::default());
+        assert!(c.local_book("700.HK").is_none());
+        assert!(c.quote_stats("700.HK").is_none());
+    }
+
+    #[test]
+    fn connector_id_is_stable_for_same_settings() {
+        let s = ConnectorSettings::default();
+        let c1 = LongPortConnector::new(s.clone());
+        let c2 = LongPortConnector::new(s);
+        assert_eq!(c1.id, c2.id);
     }
 }
