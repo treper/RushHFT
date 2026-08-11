@@ -219,15 +219,15 @@ fn inject_macos_system_proxy() -> Result<(), Box<dyn std::error::Error>> {
     // system-proxy feature) reads these lazily on the first HTTP request,
     // and the wsclient reads HTTPS_PROXY inside do_connect per connection.
     unsafe {
-        if std::env::var("HTTP_PROXY").is_err() {
-            if let Some(p) = http_proxy {
-                std::env::set_var("HTTP_PROXY", p);
-            }
+        if std::env::var("HTTP_PROXY").is_err()
+            && let Some(p) = http_proxy
+        {
+            std::env::set_var("HTTP_PROXY", p);
         }
-        if std::env::var("HTTPS_PROXY").is_err() {
-            if let Some(p) = https_proxy {
-                std::env::set_var("HTTPS_PROXY", p);
-            }
+        if std::env::var("HTTPS_PROXY").is_err()
+            && let Some(p) = https_proxy
+        {
+            std::env::set_var("HTTPS_PROXY", p);
         }
     }
     Ok(())

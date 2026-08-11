@@ -16,6 +16,9 @@ const WARMUP_MIN_SAMPLES: usize = 200;
 #[derive(Debug, Clone, Copy)]
 pub struct MrMetrics {
     pub spread_recovery_ms: Option<f64>,
+    // Reserved for future depth-recovery metric emission (currently computed
+    // but not consumed by the plugin).
+    #[allow(dead_code)]
     pub depth_recovery_ms: Option<f64>,
 }
 

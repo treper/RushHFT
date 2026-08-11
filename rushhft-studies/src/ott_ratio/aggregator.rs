@@ -29,6 +29,8 @@ impl Default for OttCounters {
 }
 
 impl OttCounters {
+    // Reserved for future plugin-restart flow; not called in current MVP.
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.order_events = 0;
         self.trade_count = 0;
