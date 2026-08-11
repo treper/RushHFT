@@ -113,6 +113,7 @@ struct Inner {
     quote_ctx: tokio::sync::Mutex<Option<Arc<longport::QuoteContext>>>,
     ctx: tokio::sync::Mutex<Option<Arc<dyn rushhft_core::plugin::PluginContext>>>,
     status: arc_swap::ArcSwap<rushhft_core::PluginStatus>,
+    user_symbols: dashmap::DashMap<String, ()>,
 }
 
 pub struct LongPortConnector {
@@ -148,6 +149,7 @@ impl LongPortConnector {
                 quote_ctx: tokio::sync::Mutex::new(None),
                 ctx: tokio::sync::Mutex::new(None),
                 status: arc_swap::ArcSwap::from_pointee(rushhft_core::PluginStatus::Loaded),
+                user_symbols: dashmap::DashMap::new(),
             }),
             base: BaseDataRetriever::new_default(),
         }
@@ -184,6 +186,51 @@ impl LongPortConnector {
 
     pub async fn on_quote(&self, symbol: &str, q: longport::quote::PushQuote) {
         Self::on_quote_inner(&self.inner, symbol, q).await;
+    }
+
+    /// Runtime-subscribe a new symbol. Idempotent.
+    pub async fn subscribe_symbol(&self, symbol: &str) -> Result<(), String> {
+        if self.inner.user_symbols.contains_key(symbol) {
+            return Ok(());
+        }
+        let guard = self.inner.quote_ctx.lock().await;
+        let Some(ctx) = guard.as_ref() else {
+            return Err("connector not started".into());
+        };
+        ctx.subscribe(
+            vec![symbol],
+            self.inner.settings.sub_flags,
+        )
+        .await
+        .map_err(|e| format!("subscribe failed: {e}"))?;
+        self.inner.user_symbols.insert(symbol.to_string(), ());
+        Ok(())
+    }
+
+    /// Runtime-unsubscribe a symbol. Idempotent.
+    pub async fn unsubscribe_symbol(&self, symbol: &str) -> Result<(), String> {
+        if !self.inner.user_symbols.contains_key(symbol) {
+            return Ok(());
+        }
+        let guard = self.inner.quote_ctx.lock().await;
+        let Some(ctx) = guard.as_ref() else {
+            return Err("connector not started".into());
+        };
+        ctx.unsubscribe(vec![symbol], self.inner.settings.sub_flags)
+            .await
+            .map_err(|e| format!("unsubscribe failed: {e}"))?;
+        self.inner.user_symbols.remove(symbol);
+        Ok(())
+    }
+
+    /// Snapshot of currently-subscribed user symbols (does not include
+    /// `settings.default_symbols`).
+    pub fn user_symbols(&self) -> Vec<String> {
+        self.inner
+            .user_symbols
+            .iter()
+            .map(|e| e.key().clone())
+            .collect()
     }
 
     async fn on_quote_inner(inner: &Arc<Inner>, symbol: &str, q: longport::quote::PushQuote) {

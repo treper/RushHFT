@@ -3,13 +3,17 @@ mod context;
 mod dto;
 mod notification;
 mod state;
+mod ui_state;
 
 use commands::AppState;
 use context::PluginContextImpl;
 use rushhft_connector_longport::{ConnectorSettings, LongPortConnector};
 use rushhft_core::plugin::Plugin;
 use rushhft_core::{OrderBookHub, ProviderHub, Settings, TradeHub, TriggerEngine};
-use rushhft_studies::{LobImbalanceSettings, LobImbalanceStudy, VpinSettings, VpinStudy};
+use rushhft_studies::{
+    LobImbalanceSettings, LobImbalanceStudy, MarketResilienceSettings, MarketResilienceStudy,
+    OttRatioSettings, OttRatioStudy, VpinSettings, VpinStudy,
+};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing_subscriber::EnvFilter;
@@ -91,7 +95,7 @@ async fn main() {
 
     let connector = Arc::new(LongPortConnector::new(ConnectorSettings::from_settings(
         &settings_snapshot,
-    ))) as Arc<dyn Plugin>;
+    )));
 
     let vpin = Arc::new(VpinStudy::new(VpinSettings {
         bucket_volume_size: rust_decimal::Decimal::ONE,
@@ -102,13 +106,31 @@ async fn main() {
     })) as Arc<dyn Plugin>;
 
     let lob = Arc::new(LobImbalanceStudy::new(LobImbalanceSettings {
-        symbol: first_symbol,
+        symbol: first_symbol.clone(),
         provider_id: 1,
         levels: 5,
         aggregation_level: settings_snapshot.aggregation_level,
     })) as Arc<dyn Plugin>;
 
-    let plugins: Vec<Arc<dyn Plugin>> = vec![connector.clone(), vpin.clone(), lob.clone()];
+    let mr = Arc::new(MarketResilienceStudy::new(MarketResilienceSettings {
+        symbol: first_symbol.clone(),
+        provider_id: 1,
+        aggregation_level: settings_snapshot.aggregation_level,
+    })) as Arc<dyn Plugin>;
+
+    let ott = Arc::new(OttRatioStudy::new(OttRatioSettings {
+        symbol: first_symbol.clone(),
+        provider_id: 1,
+        aggregation_level: settings_snapshot.aggregation_level,
+    })) as Arc<dyn Plugin>;
+
+    let plugins: Vec<Arc<dyn Plugin>> = vec![
+        connector.clone() as Arc<dyn Plugin>,
+        vpin.clone(),
+        lob.clone(),
+        mr,
+        ott,
+    ];
 
     let app_state = AppState {
         snapshot_store,
@@ -117,6 +139,8 @@ async fn main() {
         plugin_context: plugin_context.clone(),
         trigger_engine: trigger_engine.clone(),
         notification_hub: notification_hub.clone(),
+        user_symbols: Arc::new(ui_state::UserSymbols::new()),
+        connector: Some(connector.clone()),
     };
 
     // Spawn the TriggerEngine consumer.
@@ -147,6 +171,8 @@ async fn main() {
             commands::get_chart_series,
             commands::subscribe_chart_series,
             commands::get_multi_venue_prices,
+            commands::add_symbol,
+            commands::remove_symbol,
         ])
         .setup(move |_app| {
             let plugins_inner = plugins_for_setup.clone();

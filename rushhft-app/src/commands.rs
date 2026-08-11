@@ -19,6 +19,8 @@ pub struct AppState {
     pub plugin_context: Arc<dyn rushhft_core::plugin::PluginContext>,
     pub trigger_engine: Arc<rushhft_core::TriggerEngine>,
     pub notification_hub: Arc<crate::notification::NotificationHub>,
+    pub user_symbols: Arc<crate::ui_state::UserSymbols>,
+    pub connector: Option<Arc<rushhft_connector_longport::LongPortConnector>>,
 }
 
 impl AppState {
@@ -450,6 +452,39 @@ pub async fn get_plugin_descriptors(
     Ok(get_plugin_descriptors_inner(&state).await)
 }
 
+pub async fn add_symbol_inner(state: &AppState, symbol: &str) -> Result<(), String> {
+    state.user_symbols.add(symbol).await;
+    if let Some(conn) = &state.connector {
+        conn.subscribe_symbol(symbol).await?;
+    }
+    Ok(())
+}
+
+pub async fn remove_symbol_inner(state: &AppState, symbol: &str) -> Result<(), String> {
+    state.user_symbols.remove(symbol).await;
+    if let Some(conn) = &state.connector {
+        conn.unsubscribe_symbol(symbol).await?;
+    }
+    Ok(())
+}
+
+pub async fn list_user_symbols_inner(state: &AppState) -> Vec<String> {
+    state.user_symbols.list().await
+}
+
+#[tauri::command]
+pub async fn add_symbol(state: tauri::State<'_, AppState>, symbol: String) -> Result<(), String> {
+    add_symbol_inner(&state, &symbol).await
+}
+
+#[tauri::command]
+pub async fn remove_symbol(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+) -> Result<(), String> {
+    remove_symbol_inner(&state, &symbol).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,6 +512,8 @@ mod tests {
             plugin_context: ctx,
             trigger_engine,
             notification_hub,
+            user_symbols: Arc::new(crate::ui_state::UserSymbols::new()),
+            connector: None,
         }
     }
 
@@ -649,5 +686,22 @@ mod tests {
         let descs = get_plugin_descriptors_inner(&state).await;
         assert_eq!(descs.len(), 1);
         assert_eq!(descs[0].name, "VPIN Study");
+    }
+
+    #[tokio::test]
+    async fn user_symbols_starts_empty() {
+        let state = make_state(vec![]);
+        let syms = list_user_symbols_inner(&state).await;
+        assert!(syms.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_symbol_then_listed() {
+        let state = make_state(vec![]);
+        add_symbol_inner(&state, "700.HK").await.unwrap();
+        let syms = list_user_symbols_inner(&state).await;
+        assert_eq!(syms, vec!["700.HK".to_string()]);
+        remove_symbol_inner(&state, "700.HK").await.unwrap();
+        assert!(list_user_symbols_inner(&state).await.is_empty());
     }
 }
