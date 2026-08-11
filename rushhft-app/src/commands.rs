@@ -2,8 +2,8 @@
 #![allow(dead_code)]
 
 use crate::dto::{
-    PluginStatusDto, PluginTypeDto, ProviderDto, SessionStatusDto, SnapshotDto,
-    StudyDescriptorDto,
+    AggregationLevelDto, PluginStatusDto, PluginTypeDto, ProviderDto, SessionStatusDto,
+    SettingsDto, SnapshotDto, StudyDescriptorDto,
 };
 use crate::state::{SnapshotStore, SymbolSnapshot};
 use rushhft_core::plugin::Plugin;
@@ -172,6 +172,90 @@ pub async fn stop_plugin(
     stop_plugin_inner(&state, &plugin_id).await
 }
 
+fn mask_secret(s: &str) -> String {
+    if s.is_empty() {
+        return String::new();
+    }
+    "••••••".to_string()
+}
+
+fn map_aggregation(a: rushhft_core::model::enums::AggregationLevel) -> AggregationLevelDto {
+    use rushhft_core::model::enums::AggregationLevel::*;
+    match a {
+        None => AggregationLevelDto::None,
+        Ms1 => AggregationLevelDto::Ms1,
+        Ms10 => AggregationLevelDto::Ms10,
+        Ms100 => AggregationLevelDto::Ms100,
+        Ms500 => AggregationLevelDto::Ms500,
+        S1 => AggregationLevelDto::S1,
+        S3 => AggregationLevelDto::S3,
+        S5 => AggregationLevelDto::S5,
+        D1 => AggregationLevelDto::D1,
+    }
+}
+
+fn aggregation_from_dto(a: AggregationLevelDto) -> rushhft_core::model::enums::AggregationLevel {
+    use rushhft_core::model::enums::AggregationLevel::*;
+    match a {
+        AggregationLevelDto::None => None,
+        AggregationLevelDto::Ms1 => Ms1,
+        AggregationLevelDto::Ms10 => Ms10,
+        AggregationLevelDto::Ms100 => Ms100,
+        AggregationLevelDto::Ms500 => Ms500,
+        AggregationLevelDto::S1 => S1,
+        AggregationLevelDto::S3 => S3,
+        AggregationLevelDto::S5 => S5,
+        AggregationLevelDto::D1 => D1,
+    }
+}
+
+pub async fn get_settings_inner(state: &AppState) -> SettingsDto {
+    let s = state.settings.read().await;
+    SettingsDto {
+        app_key: s.app_key.clone(),
+        app_secret_masked: mask_secret(&s.app_secret),
+        access_token_masked: mask_secret(&s.access_token),
+        default_symbols: s.default_symbols.clone(),
+        depth_levels: s.depth_levels,
+        aggregation_level: map_aggregation(s.aggregation_level),
+        log_level: s.log_level.clone(),
+    }
+}
+
+pub async fn save_settings_inner(state: &AppState, dto: SettingsDto) -> Result<(), String> {
+    let mut s = state.settings.write().await;
+    s.app_key = dto.app_key;
+    // Masked fields in the DTO mean "unchanged" if the value is the mask; otherwise
+    // the frontend sent the new value. We treat "••••••" as "keep existing".
+    if dto.app_secret_masked != "••••••" {
+        s.app_secret = dto.app_secret_masked;
+    }
+    if dto.access_token_masked != "••••••" {
+        s.access_token = dto.access_token_masked;
+    }
+    s.default_symbols = dto.default_symbols;
+    s.depth_levels = dto.depth_levels;
+    s.aggregation_level = aggregation_from_dto(dto.aggregation_level);
+    s.log_level = dto.log_level;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_settings(state: tauri::State<'_, AppState>) -> Result<SettingsDto, String> {
+    Ok(get_settings_inner(&state).await)
+}
+
+#[tauri::command]
+pub async fn save_settings(
+    state: tauri::State<'_, AppState>,
+    settings: SettingsDto,
+) -> Result<(), String> {
+    save_settings_inner(&state, settings).await?;
+    let s = state.settings.read().await;
+    s.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,5 +334,38 @@ mod tests {
         let state = make_state(vec![]);
         let result = start_plugin_inner(&state, "nope").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_settings_returns_masked_secrets() {
+        let state = make_state(vec![]);
+        {
+            let mut s = state.settings.write().await;
+            s.app_key = "real_key".into();
+            s.app_secret = "real_secret_value".into();
+            s.access_token = "real_token_value".into();
+        }
+        let dto = get_settings_inner(&state).await;
+        assert_eq!(dto.app_key, "real_key");
+        assert_eq!(dto.app_secret_masked, "••••••");
+        assert_eq!(dto.access_token_masked, "••••••");
+    }
+
+    #[tokio::test]
+    async fn save_settings_persists_to_memory() {
+        let state = make_state(vec![]);
+        let dto = crate::dto::SettingsDto {
+            app_key: "new_key".into(),
+            app_secret_masked: "new_secret".into(),
+            access_token_masked: "new_token".into(),
+            default_symbols: vec!["700.HK".into()],
+            depth_levels: 10,
+            aggregation_level: crate::dto::AggregationLevelDto::S1,
+            log_level: "info".into(),
+        };
+        save_settings_inner(&state, dto.clone()).await.unwrap();
+        let loaded = state.settings.read().await;
+        assert_eq!(loaded.app_key, "new_key");
+        assert_eq!(loaded.app_secret, "new_secret");
     }
 }
