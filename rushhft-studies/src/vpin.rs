@@ -3,7 +3,7 @@
 //! Easley, Lopez de Prado & O'Hara (2012). VPIN = (1/n) × Σ|V_buy_i − V_sell_i| / V_bucket
 //! over n completed volume buckets. Range [0, 1].
 
-use rushhft_core::model::enums::{AggregationLevel, PluginStatus, PluginType};
+use rushhft_core::model::enums::{AggregationLevel, PluginStatus, PluginType, TradeDirection};
 use rushhft_core::plugin::{BaseStudy, Plugin, PluginContext, PluginError};
 use rust_decimal::Decimal;
 use std::sync::Arc;
@@ -121,6 +121,17 @@ fn hash_symbol_provider(symbol: &str, provider_id: i32) -> String {
     h ^= provider_id as u64;
     h = h.wrapping_mul(0x100000001b3);
     format!("{:x}", h)
+}
+
+/// Map a `TradeDirection` to `Option<bool>` (buy/sell/skip). Free function —
+/// `impl From<TradeDirection> for Option<bool>` would collide with the orphan rule.
+#[allow(dead_code)]
+pub fn map_trade_direction(d: TradeDirection) -> Option<bool> {
+    match d {
+        TradeDirection::Up => Some(true),
+        TradeDirection::Down => Some(false),
+        TradeDirection::Neutral => None,
+    }
 }
 
 /// Pure VPIN bucket arithmetic — no I/O, no async. Owned by `VpinStudy`.
@@ -370,5 +381,20 @@ mod tests {
         core.reset();
         assert_eq!(core.current_vpin(), Decimal::ZERO);
         assert_eq!(core.completed_buckets(), 0);
+    }
+
+    #[test]
+    fn map_trade_direction_up_is_buy() {
+        assert_eq!(map_trade_direction(TradeDirection::Up), Some(true));
+    }
+
+    #[test]
+    fn map_trade_direction_down_is_sell() {
+        assert_eq!(map_trade_direction(TradeDirection::Down), Some(false));
+    }
+
+    #[test]
+    fn map_trade_direction_neutral_is_skipped() {
+        assert_eq!(map_trade_direction(TradeDirection::Neutral), None);
     }
 }
