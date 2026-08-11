@@ -3,6 +3,7 @@ pub mod model;
 pub mod plugin;
 pub mod pool;
 pub mod settings;
+pub mod stats;
 pub mod trigger;
 
 pub use model::book_item::BookItem;
@@ -21,6 +22,8 @@ pub use plugin::{
 pub use pool::{ObjectPool, PoolGuard, RollingWindow};
 
 pub use settings::{Settings, SettingsError};
+
+pub use stats::P2Quantile;
 
 pub use trigger::{
     ActionType, ConditionOperator, MetricEvent, RestApiConfig, TimeWindow, TimeWindowUnit,
