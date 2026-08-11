@@ -1,14 +1,225 @@
 :root {
   --bg: #0d1117;
   --panel: #161b22;
+  --panel-2: #1c2129;
   --border: #30363d;
   /* 红涨绿跌 (A-share convention): bids/Up → red, asks/Down → green */
   --bid: #f85149;
   --ask: #7ee787;
   --accent: #58a6ff;
   --muted: #8b949e;
+  --warn: #d29922;
+  --err: #f85149;
 }
+
+* { box-sizing: border-box; }
+
 body {
   background: var(--bg);
   color: #c9d1d9;
+  font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  margin: 0;
 }
+
+.app {
+  display: grid;
+  grid-template-columns: 480px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.sidebar {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-scroll {
+  overflow-y: auto;
+  flex: 1;
+  padding: 8px;
+}
+
+.main {
+  display: grid;
+  grid-template-rows: auto 1fr 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  overflow: hidden;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.panel-header {
+  padding: 4px 8px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Toolbar */
+.toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.toolbar button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: #c9d1d9;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.toolbar button:hover { border-color: var(--accent); }
+.toolbar .bell { margin-left: auto; }
+
+/* Provider chips */
+.provider {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 10px;
+}
+.provider .dot { width: 6px; height: 6px; border-radius: 50%; }
+
+/* Study tiles */
+.tile {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+}
+.tile .label { color: var(--muted); font-size: 10px; }
+.tile .value { font-size: 18px; font-weight: 600; }
+.tile.stale .value { color: var(--muted); }
+
+/* Depth ladder (combined with size bars) */
+.depth {
+  display: grid;
+  grid-auto-rows: 18px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 11px;
+}
+.depth .row {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  padding: 1px 8px;
+  align-items: center;
+}
+.depth .row.ask { color: var(--ask); }
+.depth .row.bid { color: var(--bid); }
+.depth .row .bar {
+  position: absolute;
+  top: 0; bottom: 0;
+  opacity: 0.2;
+}
+.depth .row.ask .bar { right: 0; background: var(--ask); }
+.depth .row.bid .bar { left: 0; background: var(--bid); }
+.depth .row .text { position: relative; z-index: 1; }
+.depth .spread {
+  text-align: center;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 2px 0;
+  font-weight: 600;
+}
+
+/* Top of book */
+.tob {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 16px;
+}
+.tob .bid { color: var(--bid); }
+.tob .ask { color: var(--ask); }
+.tob .stale { color: var(--muted); font-size: 10px; }
+
+/* LOB Imbalance gauge */
+.gauge {
+  position: relative;
+  height: 18px;
+  background: linear-gradient(to right, var(--bid) 0%, #2a2a2a 50%, var(--bid) 100%);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.gauge .arrow {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 2px;
+  background: white;
+  transition: left 100ms linear;
+}
+
+/* Trades tape */
+.trade {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  padding: 1px 8px;
+}
+
+/* Positions stub */
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 600px;
+  max-height: 80vh;
+  overflow: auto;
+  padding: 16px;
+}
+.modal h2 { margin: 0 0 12px; font-size: 14px; }
+.modal .row { display: flex; justify-content: space-between; padding: 4px 0; }
+.modal input, .modal select {
+  background: var(--bg);
+  color: inherit;
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.modal button { cursor: pointer; background: var(--panel-2); color: inherit; border: 1px solid var(--border); padding: 4px 12px; border-radius: 4px; }
