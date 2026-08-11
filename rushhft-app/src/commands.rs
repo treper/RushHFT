@@ -17,6 +17,7 @@ pub struct AppState {
     pub plugins: Vec<Arc<dyn Plugin>>,
     pub settings: Arc<RwLock<Settings>>,
     pub plugin_context: Arc<dyn rushhft_core::plugin::PluginContext>,
+    pub trigger_engine: Arc<rushhft_core::TriggerEngine>,
 }
 
 impl AppState {
@@ -256,6 +257,89 @@ pub async fn save_settings(
     Ok(())
 }
 
+pub async fn get_triggers_inner(state: &AppState) -> Vec<rushhft_core::TriggerRule> {
+    state.trigger_engine.get_rules().await
+}
+
+pub async fn save_trigger_inner(
+    state: &AppState,
+    rule: rushhft_core::TriggerRule,
+) -> Result<(), String> {
+    state.trigger_engine.add_or_update_rule(rule).await;
+    Ok(())
+}
+
+pub async fn delete_trigger_inner(state: &AppState, rule_id: i64) -> Result<(), String> {
+    state.trigger_engine.remove_rule(rule_id).await;
+    Ok(())
+}
+
+pub async fn test_trigger_rest_inner(
+    state: &AppState,
+    rule_id: i64,
+) -> Result<String, String> {
+    let rules = state.trigger_engine.get_rules().await;
+    let rule = rules
+        .into_iter()
+        .find(|r| r.rule_id == rule_id)
+        .ok_or_else(|| format!("rule {} not found", rule_id))?;
+    let action = rule
+        .actions
+        .first()
+        .ok_or_else(|| format!("rule {} has no actions", rule_id))?;
+    let rest = action
+        .rest_api
+        .as_ref()
+        .ok_or_else(|| format!("rule {} action has no REST config", rule_id))?;
+    // Fire a one-shot HTTP request — this is the manual "test" path.
+    let client = reqwest::Client::new();
+    let mut req = match rest.method.as_str() {
+        "POST" => client.post(&rest.url),
+        "PUT" => client.put(&rest.url),
+        "GET" => client.get(&rest.url),
+        _ => client.post(&rest.url),
+    };
+    for (k, v) in &rest.headers {
+        req = req.header(k, v);
+    }
+    if !rest.body.is_empty() {
+        req = req.body(rest.body.clone());
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    Ok(format!("{} {}", resp.status().as_u16(), rest.url))
+}
+
+#[tauri::command]
+pub async fn get_triggers(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<rushhft_core::TriggerRule>, String> {
+    Ok(get_triggers_inner(&state).await)
+}
+
+#[tauri::command]
+pub async fn save_trigger(
+    state: tauri::State<'_, AppState>,
+    rule: rushhft_core::TriggerRule,
+) -> Result<(), String> {
+    save_trigger_inner(&state, rule).await
+}
+
+#[tauri::command]
+pub async fn delete_trigger(
+    state: tauri::State<'_, AppState>,
+    rule_id: i64,
+) -> Result<(), String> {
+    delete_trigger_inner(&state, rule_id).await
+}
+
+#[tauri::command]
+pub async fn test_trigger_rest(
+    state: tauri::State<'_, AppState>,
+    rule_id: i64,
+) -> Result<String, String> {
+    test_trigger_rest_inner(&state, rule_id).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +349,7 @@ mod tests {
         let t_hub = Arc::new(rushhft_core::TradeHub::new());
         let p_hub = Arc::new(rushhft_core::ProviderHub::new());
         let snapshot_store = Arc::new(SnapshotStore::new());
+        let trigger_engine = Arc::new(rushhft_core::TriggerEngine::new());
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<rushhft_core::MetricEvent>();
         let ctx: Arc<dyn rushhft_core::plugin::PluginContext> = Arc::new(
             crate::context::PluginContextImpl::new(
@@ -280,6 +365,7 @@ mod tests {
             plugins,
             settings: Arc::new(RwLock::new(Settings::default())),
             plugin_context: ctx,
+            trigger_engine,
         }
     }
 
@@ -367,5 +453,63 @@ mod tests {
         let loaded = state.settings.read().await;
         assert_eq!(loaded.app_key, "new_key");
         assert_eq!(loaded.app_secret, "new_secret");
+    }
+
+    use rushhft_core::{
+        ActionType, ConditionOperator, RestApiConfig, TimeWindow, TimeWindowUnit,
+        TriggerAction, TriggerCondition, TriggerRule,
+    };
+    use rust_decimal_macros::dec;
+
+    fn sample_rule(id: i64) -> TriggerRule {
+        TriggerRule {
+            rule_id: id,
+            name: format!("rule-{}", id),
+            is_enabled: true,
+            conditions: vec![TriggerCondition {
+                condition_id: 1,
+                plugin: "VPIN Study".into(),
+                metric: "VPIN".into(),
+                exchange: "LongPort".into(),
+                symbol: "700.HK".into(),
+                operator: ConditionOperator::GreaterThan,
+                threshold: dec!(0.5),
+                window: Some(TimeWindow {
+                    value: 1,
+                    unit: TimeWindowUnit::Seconds,
+                }),
+            }],
+            actions: vec![TriggerAction {
+                action_type: ActionType::RestApi,
+                cooldown_duration: 10,
+                cooldown_unit: TimeWindowUnit::Seconds,
+                rest_api: Some(RestApiConfig {
+                    url: "https://example.com/hook".into(),
+                    method: "POST".into(),
+                    headers: std::collections::HashMap::new(),
+                    body: "{}".into(),
+                }),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn save_trigger_persists_and_lists() {
+        let state = make_state(vec![]);
+        save_trigger_inner(&state, sample_rule(1)).await.unwrap();
+        let rules = get_triggers_inner(&state).await;
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].rule_id, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_trigger_removes_rule() {
+        let state = make_state(vec![]);
+        save_trigger_inner(&state, sample_rule(1)).await.unwrap();
+        save_trigger_inner(&state, sample_rule(2)).await.unwrap();
+        delete_trigger_inner(&state, 1).await.unwrap();
+        let rules = get_triggers_inner(&state).await;
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].rule_id, 2);
     }
 }
