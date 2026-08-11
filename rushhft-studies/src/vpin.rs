@@ -4,9 +4,7 @@
 //! over n completed volume buckets. Range [0, 1].
 
 use rushhft_core::hub::SubscriptionGuard;
-use rushhft_core::model::enums::{
-    AggregationLevel, PluginStatus, PluginType, TradeDirection,
-};
+use rushhft_core::model::enums::{AggregationLevel, PluginStatus, PluginType, TradeDirection};
 use rushhft_core::model::order_book::OrderBook;
 use rushhft_core::model::study::BaseStudyModel;
 use rushhft_core::model::trade::Trade;
@@ -145,14 +143,7 @@ impl Plugin for VpinStudy {
                     let ts = item.timestamp;
                     tokio::spawn(async move {
                         let _ = ctx
-                            .register_metric(
-                                "VPIN Study",
-                                "VPIN",
-                                "LongPort",
-                                &symbol,
-                                value,
-                                ts,
-                            )
+                            .register_metric("VPIN Study", "VPIN", "LongPort", &symbol, value, ts)
                             .await;
                     });
                 })
@@ -188,8 +179,7 @@ impl Plugin for VpinStudy {
         let inner_t = self.inner.clone();
         let t_hub = ctx.trade_hub();
         let t_guard = t_hub.subscribe(Arc::new(move |t: &Trade| {
-            if t.symbol != inner_t.settings.symbol
-                || t.provider_id != inner_t.settings.provider_id
+            if t.symbol != inner_t.settings.symbol || t.provider_id != inner_t.settings.provider_id
             {
                 return;
             }
@@ -220,23 +210,17 @@ impl Plugin for VpinStudy {
         }
 
         // 7) Status <- Started
-        self.inner
-            .status
-            .store(Arc::new(PluginStatus::Started));
+        self.inner.status.store(Arc::new(PluginStatus::Started));
         Ok(())
     }
 
     async fn stop(&self) -> Result<(), PluginError> {
-        self.inner
-            .status
-            .store(Arc::new(PluginStatus::Stopping));
+        self.inner.status.store(Arc::new(PluginStatus::Stopping));
         {
             let mut guards = self.inner.guards.lock().await;
             *guards = None;
         }
-        self.inner
-            .status
-            .store(Arc::new(PluginStatus::Stopped));
+        self.inner.status.store(Arc::new(PluginStatus::Stopped));
         Ok(())
     }
 }
@@ -528,11 +512,11 @@ mod tests {
         assert_eq!(map_trade_direction(TradeDirection::Neutral), None);
     }
 
+    use rushhft_core::PluginContext;
     use rushhft_core::hub::{OrderBookHub, ProviderHub, TradeHub};
     use rushhft_core::model::order_book::OrderBook;
     use rushhft_core::model::provider::Provider;
     use rushhft_core::model::trade::Trade;
-    use rushhft_core::PluginContext;
 
     type MetricRecord = (String, String, String, String, Decimal);
 

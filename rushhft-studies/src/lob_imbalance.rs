@@ -159,23 +159,17 @@ impl Plugin for LobImbalanceStudy {
             *guards = Some(vec![ob_guard]);
         }
 
-        self.inner
-            .status
-            .store(Arc::new(PluginStatus::Started));
+        self.inner.status.store(Arc::new(PluginStatus::Started));
         Ok(())
     }
 
     async fn stop(&self) -> Result<(), PluginError> {
-        self.inner
-            .status
-            .store(Arc::new(PluginStatus::Stopping));
+        self.inner.status.store(Arc::new(PluginStatus::Stopping));
         {
             let mut guards = self.inner.guards.lock().await;
             *guards = None;
         }
-        self.inner
-            .status
-            .store(Arc::new(PluginStatus::Stopped));
+        self.inner.status.store(Arc::new(PluginStatus::Stopped));
         Ok(())
     }
 }
@@ -262,10 +256,7 @@ mod tests {
 
     #[test]
     fn imbalance_balanced_book_is_zero() {
-        let ob = make_book(
-            vec![(dec!(100), dec!(100))],
-            vec![(dec!(101), dec!(100))],
-        );
+        let ob = make_book(vec![(dec!(100), dec!(100))], vec![(dec!(101), dec!(100))]);
         assert_eq!(compute_imbalance(&ob, 5), Decimal::ZERO);
     }
 
@@ -293,10 +284,10 @@ mod tests {
         assert_eq!(compute_imbalance(&ob, 5), expected);
     }
 
+    use rushhft_core::PluginContext;
     use rushhft_core::hub::{OrderBookHub, ProviderHub, TradeHub};
     use rushhft_core::model::provider::Provider;
     use rushhft_core::model::trade::Trade;
-    use rushhft_core::PluginContext;
 
     struct LobReplayCtx {
         ob_hub: Arc<OrderBookHub>,
