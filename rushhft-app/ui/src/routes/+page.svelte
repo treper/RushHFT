@@ -1,116 +1,54 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { onMount, onDestroy } from 'svelte';
+  import { currentSymbol, loadSymbols, addSymbol, removeSymbol } from '$lib/stores/symbols';
+  import { startPolling, stopPolling } from '$lib/stores/snapshot';
+  import { subscribeNotifications } from '$lib/stores/notifications';
+  import Sidebar from '$lib/components/Sidebar.svelte';
+  import DepthLadder from '$lib/components/DepthLadder.svelte';
+  import TopOfBook from '$lib/components/TopOfBook.svelte';
+  import LOBImbalanceGauge from '$lib/components/LOBImbalanceGauge.svelte';
+  import TradesTape from '$lib/components/TradesTape.svelte';
+  import Positions from '$lib/components/Positions.svelte';
+  import CumulativeBook from '$lib/components/Charts/CumulativeBook.svelte';
+  import PriceChart from '$lib/components/Charts/PriceChart.svelte';
+  import SpreadChart from '$lib/components/Charts/SpreadChart.svelte';
+  import PluginManagerModal from '$lib/modals/PluginManagerModal.svelte';
+  import SettingsModal from '$lib/modals/SettingsModal.svelte';
+  import TriggersModal from '$lib/modals/TriggersModal.svelte';
+  import MultiVenueModal from '$lib/modals/MultiVenueModal.svelte';
 
-  let symbol = $state('700.HK');
-  let snapshot = $state<any>(null);
-  let providers = $state<any[]>([]);
-  let studies = $state<any[]>([]);
-  let stopped = false;
+  let newSymbol = $state('');
 
-  async function poll() {
-    while (!stopped) {
-      try {
-        const [snap, ps, sts] = await Promise.all([
-          invoke('get_snapshot', { symbol }),
-          invoke('get_providers'),
-          invoke('get_studies'),
-        ]);
-        snapshot = snap;
-        providers = ps;
-        studies = sts;
-      } catch (e) {
-        // first failure is expected before plugin starts
-      }
-      await new Promise((r) => setTimeout(r, 500));
-    }
-  }
-
-  onMount(() => {
-    poll();
-    return () => {
-      stopped = true;
-    };
+  onMount(async () => {
+    await loadSymbols();
+    await startPolling($currentSymbol);
+    await subscribeNotifications().catch(() => {});
   });
+
+  onDestroy(() => stopPolling());
+
+  async function onAdd() {
+    if (!newSymbol) return;
+    await addSymbol(newSymbol);
+    newSymbol = '';
+  }
 </script>
 
-<header
-  style="padding:8px 12px; border-bottom:1px solid var(--border); display:flex; gap:12px; align-items:center;"
->
-  <strong style="color: var(--accent);">RushHFT</strong>
-  <input
-    bind:value={symbol}
-    style="background:var(--panel); color:inherit; border:1px solid var(--border); padding:4px 8px; border-radius:4px;"
-  />
-  <span style="color: var(--muted);">Providers:</span>
-  {#each providers as p}
-    <span style="color: {p.status === 'Connected' ? 'var(--bid)' : 'var(--ask)'};">
-      ● {p.name}
-    </span>
-  {/each}
-</header>
-
-<main
-  style="display:grid; grid-template-columns: 220px 1fr 1fr; gap:6px; padding:6px; height: calc(100vh - 48px);"
->
-  <section style="background:var(--panel); border:1px solid var(--border); padding:8px; overflow:auto;">
-    <h3 style="margin:0 0 8px;">Asks</h3>
-    {#each snapshot?.asks ?? [] as ask}
-      <div style="display:flex; justify-content:space-between; color:var(--ask);">
-        <span>{ask.price}</span>
-        <span>{ask.size}</span>
-      </div>
-    {/each}
-    <div style="border-top:1px solid var(--border); margin:8px 0; padding-top:8px;">
-      <strong>Spread: {snapshot?.spread ?? '-'}</strong>
+<div class="app">
+  <Sidebar />
+  <main class="main">
+    <TopOfBook />
+    <CumulativeBook />
+    <PriceChart />
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; min-height:0;">
+      <DepthLadder />
+      <TradesTape />
     </div>
-    <h3 style="margin:0 0 8px;">Bids</h3>
-    {#each snapshot?.bids ?? [] as bid}
-      <div style="display:flex; justify-content:space-between; color:var(--bid);">
-        <span>{bid.price}</span>
-        <span>{bid.size}</span>
-      </div>
-    {/each}
-  </section>
+    <Positions />
+  </main>
+</div>
 
-  <section style="background:var(--panel); border:1px solid var(--border); padding:8px; overflow:auto;">
-    <h3 style="margin:0 0 8px;">Recent Trades</h3>
-    {#each snapshot?.recent_trades ?? [] as t}
-      <div
-        style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-family:ui-monospace, monospace; font-size:12px;"
-      >
-        <span
-          style="color: {t.direction === 'Up'
-            ? 'var(--bid)'
-            : t.direction === 'Down'
-              ? 'var(--ask)'
-              : 'var(--muted)'};"
-        >
-          {t.price}
-        </span>
-        <span>{t.size}</span>
-        <span style="color:var(--muted);">{new Date(t.timestamp).toLocaleTimeString()}</span>
-      </div>
-    {/each}
-  </section>
-
-  <section style="background:var(--panel); border:1px solid var(--border); padding:8px; overflow:auto;">
-    <h3 style="margin:0 0 8px;">Studies</h3>
-    {#each snapshot?.studies ?? [] as s}
-      <div style="display:flex; justify-content:space-between; padding:4px 0;">
-        <span>{s.name}</span>
-        <strong style="color:var(--accent);">{s.value}</strong>
-      </div>
-    {/each}
-    <hr style="border-color:var(--border); margin:12px 0;" />
-    <h3 style="margin:0 0 8px;">Plugins</h3>
-    {#each studies as s}
-      <div style="display:flex; justify-content:space-between; padding:2px 0;">
-        <span>{s.name}</span>
-        <span style="color: {s.status === 'Started' ? 'var(--bid)' : 'var(--muted)'};">
-          {s.status}
-        </span>
-      </div>
-    {/each}
-  </section>
-</main>
+<PluginManagerModal />
+<SettingsModal />
+<TriggersModal />
+<MultiVenueModal />
