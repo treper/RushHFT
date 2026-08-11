@@ -3,11 +3,17 @@
 //! Easley, Lopez de Prado & O'Hara (2012). VPIN = (1/n) × Σ|V_buy_i − V_sell_i| / V_bucket
 //! over n completed volume buckets. Range [0, 1].
 
-use rushhft_core::model::enums::{AggregationLevel, PluginStatus, PluginType, TradeDirection};
+use rushhft_core::hub::SubscriptionGuard;
+use rushhft_core::model::enums::{
+    AggregationLevel, PluginStatus, PluginType, TradeDirection,
+};
+use rushhft_core::model::order_book::OrderBook;
+use rushhft_core::model::study::BaseStudyModel;
+use rushhft_core::model::trade::Trade;
 use rushhft_core::plugin::{BaseStudy, Plugin, PluginContext, PluginError};
 use rust_decimal::Decimal;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::{Arc, Mutex as StdMutex};
+use time::OffsetDateTime;
 
 /// Parameters for the VPIN study.
 #[derive(Debug, Clone)]
@@ -36,19 +42,22 @@ impl Default for VpinSettings {
     }
 }
 
+struct Inner {
+    settings: VpinSettings,
+    core: StdMutex<VpinCore>,
+    base: BaseStudy,
+    status: Arc<arc_swap::ArcSwap<PluginStatus>>,
+    ctx: tokio::sync::Mutex<Option<Arc<dyn PluginContext>>>,
+    guards: tokio::sync::Mutex<Option<Vec<SubscriptionGuard>>>,
+}
+
 /// VPIN study plugin.
 pub struct VpinStudy {
     id: String,
     version: &'static str,
     author: &'static str,
     description: &'static str,
-    #[allow(dead_code)]
-    settings: VpinSettings,
-    #[allow(dead_code)]
-    base: BaseStudy,
-    status: Arc<arc_swap::ArcSwap<PluginStatus>>,
-    #[allow(dead_code)]
-    ctx: Mutex<Option<Arc<dyn PluginContext>>>,
+    inner: Arc<Inner>,
 }
 
 impl VpinStudy {
@@ -57,15 +66,21 @@ impl VpinStudy {
             "vpin-{}",
             hash_symbol_provider(&settings.symbol, settings.provider_id)
         );
+        let core = VpinCore::new(settings.bucket_volume_size, settings.number_of_buckets);
+        let inner = Arc::new(Inner {
+            settings,
+            core: StdMutex::new(core),
+            base: BaseStudy::new(AggregationLevel::S1),
+            status: Arc::new(arc_swap::ArcSwap::from_pointee(PluginStatus::Loaded)),
+            ctx: tokio::sync::Mutex::new(None),
+            guards: tokio::sync::Mutex::new(None),
+        });
         Self {
             id,
             version: "0.1.0",
             author: "RushHFT",
             description: "Volume-Synchronized Probability of Informed Trading",
-            settings,
-            base: BaseStudy::new(AggregationLevel::S1),
-            status: Arc::new(arc_swap::ArcSwap::from_pointee(PluginStatus::Loaded)),
-            ctx: Mutex::new(None),
+            inner,
         }
     }
 
@@ -92,7 +107,7 @@ impl Plugin for VpinStudy {
         PluginType::Study
     }
     fn status(&self) -> PluginStatus {
-        **self.status.load()
+        **self.inner.status.load()
     }
     fn plugin_id(&self) -> &str {
         &self.id
@@ -101,13 +116,127 @@ impl Plugin for VpinStudy {
         true
     }
 
-    async fn start(&self, _ctx: Arc<dyn PluginContext>) -> Result<(), PluginError> {
-        // Real implementation lands in Task 5.
+    async fn start(&self, ctx: Arc<dyn PluginContext>) -> Result<(), PluginError> {
+        // 1) Store ctx
+        {
+            let mut guard = self.inner.ctx.lock().await;
+            *guard = Some(ctx.clone());
+        }
+
+        // 2) Reset core
+        {
+            let mut core = self.inner.core.lock().unwrap();
+            core.reset();
+        }
+
+        // 3) Spawn the BaseStudy consumer -> register_metric
+        // The BaseStudy is owned by Inner; we need two clones of Arc<Inner>:
+        // one to keep alive for the .base reference, one to capture in the closure.
+        let inner_for_base = self.inner.clone();
+        let inner_for_closure = self.inner.clone();
+        let ctx_for_consumer = ctx.clone();
+        tokio::spawn(async move {
+            inner_for_base
+                .base
+                .start_consumer(move |item: &BaseStudyModel| {
+                    let ctx = ctx_for_consumer.clone();
+                    let symbol = inner_for_closure.settings.symbol.clone();
+                    let value = item.value;
+                    let ts = item.timestamp;
+                    tokio::spawn(async move {
+                        let _ = ctx
+                            .register_metric(
+                                "VPIN Study",
+                                "VPIN",
+                                "LongPort",
+                                &symbol,
+                                value,
+                                ts,
+                            )
+                            .await;
+                    });
+                })
+                .await;
+        });
+
+        // 4) Subscribe to OrderBookHub
+        let inner_ob = self.inner.clone();
+        let ob_hub = ctx.order_book_hub();
+        let ob_guard = ob_hub.subscribe(Arc::new(move |ob: &OrderBook| {
+            if ob.symbol != inner_ob.settings.symbol
+                || ob.provider_id != inner_ob.settings.provider_id
+            {
+                return;
+            }
+            let mid = ob.mid_price().unwrap_or(Decimal::ZERO);
+            let mut core = inner_ob.core.lock().unwrap();
+            core.ingest_mid(mid);
+            let vpin = core.current_vpin();
+            inner_ob.base.add_calculation(BaseStudyModel {
+                value: vpin,
+                format: "N2".into(),
+                timestamp: OffsetDateTime::now_utc(),
+                market_mid_price: mid,
+                value_color: "White".into(),
+                tooltip: String::new(),
+                has_error: false,
+                is_stale: false,
+            });
+        }));
+
+        // 5) Subscribe to TradeHub
+        let inner_t = self.inner.clone();
+        let t_hub = ctx.trade_hub();
+        let t_guard = t_hub.subscribe(Arc::new(move |t: &Trade| {
+            if t.symbol != inner_t.settings.symbol
+                || t.provider_id != inner_t.settings.provider_id
+            {
+                return;
+            }
+            let is_buy = map_trade_direction(t.direction);
+            let size = t.size;
+            let mid = t.market_mid_price;
+            let ts = t.timestamp;
+            let mut core = inner_t.core.lock().unwrap();
+            core.ingest_mid(mid);
+            core.ingest_trade(size, is_buy);
+            let vpin = core.current_vpin();
+            inner_t.base.add_calculation(BaseStudyModel {
+                value: vpin,
+                format: "N2".into(),
+                timestamp: ts,
+                market_mid_price: mid,
+                value_color: "White".into(),
+                tooltip: String::new(),
+                has_error: false,
+                is_stale: false,
+            });
+        }));
+
+        // 6) Stash guards
+        {
+            let mut guards = self.inner.guards.lock().await;
+            *guards = Some(vec![ob_guard, t_guard]);
+        }
+
+        // 7) Status <- Started
+        self.inner
+            .status
+            .store(Arc::new(PluginStatus::Started));
         Ok(())
     }
 
     async fn stop(&self) -> Result<(), PluginError> {
-        // Real implementation lands in Task 5.
+        self.inner
+            .status
+            .store(Arc::new(PluginStatus::Stopping));
+        {
+            let mut guards = self.inner.guards.lock().await;
+            *guards = None;
+        }
+        self.inner
+            .status
+            .store(Arc::new(PluginStatus::Stopped));
         Ok(())
     }
 }
@@ -135,7 +264,6 @@ pub fn map_trade_direction(d: TradeDirection) -> Option<bool> {
 }
 
 /// Pure VPIN bucket arithmetic — no I/O, no async. Owned by `VpinStudy`.
-#[allow(dead_code)]
 pub(crate) struct VpinCore {
     bucket_volume_size: Decimal,
     number_of_buckets: usize,
@@ -152,7 +280,6 @@ pub(crate) struct VpinCore {
     completed_buckets: u64,
 }
 
-#[allow(dead_code)]
 impl VpinCore {
     pub fn new(bucket_volume_size: Decimal, number_of_buckets: usize) -> Self {
         let n = if number_of_buckets == 0 {
@@ -183,14 +310,17 @@ impl VpinCore {
         }
     }
 
+    #[allow(dead_code)]
     pub fn current_bucket_volume(&self) -> Decimal {
         self.current_bucket_volume
     }
 
+    #[allow(dead_code)]
     pub fn last_market_mid_price(&self) -> Decimal {
         self.last_market_mid_price
     }
 
+    #[allow(dead_code)]
     pub fn completed_buckets(&self) -> u64 {
         self.completed_buckets
     }
@@ -396,5 +526,113 @@ mod tests {
     #[test]
     fn map_trade_direction_neutral_is_skipped() {
         assert_eq!(map_trade_direction(TradeDirection::Neutral), None);
+    }
+
+    use rushhft_core::hub::{OrderBookHub, ProviderHub, TradeHub};
+    use rushhft_core::model::order_book::OrderBook;
+    use rushhft_core::model::provider::Provider;
+    use rushhft_core::model::trade::Trade;
+    use rushhft_core::PluginContext;
+
+    type MetricRecord = (String, String, String, String, Decimal);
+
+    struct ReplayCtx {
+        ob_hub: Arc<OrderBookHub>,
+        t_hub: Arc<TradeHub>,
+        p_hub: Arc<ProviderHub>,
+        metrics: Arc<std::sync::Mutex<Vec<MetricRecord>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl PluginContext for ReplayCtx {
+        async fn publish_order_book(&self, _ob: OrderBook) {}
+        async fn publish_trade(&self, _t: Trade) {}
+        async fn publish_provider(&self, _p: Provider) {}
+        async fn register_metric(
+            &self,
+            plugin: &str,
+            metric: &str,
+            exchange: &str,
+            symbol: &str,
+            value: Decimal,
+            _ts: OffsetDateTime,
+        ) {
+            self.metrics.lock().unwrap().push((
+                plugin.to_string(),
+                metric.to_string(),
+                exchange.to_string(),
+                symbol.to_string(),
+                value,
+            ));
+        }
+        fn order_book_hub(&self) -> Arc<OrderBookHub> {
+            self.ob_hub.clone()
+        }
+        fn trade_hub(&self) -> Arc<TradeHub> {
+            self.t_hub.clone()
+        }
+        fn provider_hub(&self) -> Arc<ProviderHub> {
+            self.p_hub.clone()
+        }
+    }
+
+    fn make_trade(price: Decimal, size: Decimal, dir: TradeDirection, ts_secs: i64) -> Trade {
+        Trade {
+            price,
+            size,
+            timestamp: OffsetDateTime::from_unix_timestamp(ts_secs).unwrap(),
+            direction: dir,
+            trade_type: "D".to_string(),
+            symbol: "700.HK".to_string(),
+            provider_id: 1,
+            market_mid_price: Decimal::ZERO,
+        }
+    }
+
+    #[tokio::test]
+    async fn vpin_start_registers_metric_after_bucket_completes() {
+        let ob_hub = Arc::new(OrderBookHub::new());
+        let t_hub = Arc::new(TradeHub::new());
+        let p_hub = Arc::new(ProviderHub::new());
+        let metrics = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let ctx = Arc::new(ReplayCtx {
+            ob_hub: ob_hub.clone(),
+            t_hub: t_hub.clone(),
+            p_hub: p_hub.clone(),
+            metrics: metrics.clone(),
+        }) as Arc<dyn PluginContext>;
+
+        let study = Arc::new(VpinStudy::new(VpinSettings {
+            bucket_volume_size: dec!(1),
+            number_of_buckets: 50,
+            symbol: "700.HK".into(),
+            provider_id: 1,
+            aggregation_level: AggregationLevel::S1,
+        }));
+        study.start(ctx).await.unwrap();
+        assert_eq!(study.status(), PluginStatus::Started);
+
+        // 1-volume buy trade -> one bucket completes, imbalance=1
+        t_hub.publish(make_trade(
+            dec!(100.50),
+            dec!(1),
+            TradeDirection::Up,
+            1_700_000_000,
+        ));
+
+        // give the consumer task time to drain
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let collected = metrics.lock().unwrap().clone();
+        assert!(
+            collected
+                .iter()
+                .any(|m| m.0 == "VPIN Study" && m.1 == "VPIN" && m.4 == Decimal::ONE),
+            "expected at least one metric with VPIN=1, got {:?}",
+            collected
+        );
+
+        study.stop().await.unwrap();
+        assert_eq!(study.status(), PluginStatus::Stopped);
     }
 }
