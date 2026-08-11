@@ -177,6 +177,19 @@ impl LongPortConnector {
         Self::on_trade_inner(&self.inner, symbol, t).await;
     }
 
+    pub async fn on_quote(&self, symbol: &str, q: longport::quote::PushQuote) {
+        Self::on_quote_inner(&self.inner, symbol, q).await;
+    }
+
+    async fn on_quote_inner(
+        inner: &Arc<Inner>,
+        symbol: &str,
+        q: longport::quote::PushQuote,
+    ) {
+        let stats: QuoteStats = q.into();
+        inner.quote_stats.insert(symbol.to_string(), stats);
+    }
+
     async fn on_trade_inner(
         inner: &Arc<Inner>,
         symbol: &str,
@@ -763,5 +776,42 @@ mod tests {
         let trades = ctx.published_trades.lock().unwrap().clone();
         assert_eq!(trades.len(), 1);
         assert_eq!(trades[0].market_mid_price, dec!(0));
+    }
+
+    #[tokio::test]
+    async fn on_quote_stores_quote_stats() {
+        use rust_decimal_macros::dec;
+        let c = test_connector();
+        let ctx = Arc::new(MockCtx::new());
+        c.inner
+            .ctx
+            .lock()
+            .await
+            .replace(ctx.clone() as Arc<dyn PluginContext>);
+
+        c.on_quote(
+            "700.HK",
+            longport::quote::PushQuote {
+                last_done: dec!(350.00),
+                open: dec!(345.00),
+                high: dec!(352.00),
+                low: dec!(344.00),
+                timestamp: time::OffsetDateTime::from_unix_timestamp(1_700_000_000)
+                    .unwrap(),
+                volume: 1_000_000,
+                turnover: dec!(350_000_000),
+                trade_status: longport::quote::TradeStatus::Normal,
+                trade_session: longport::quote::TradeSession::Intraday,
+                current_volume: 5_000,
+                current_turnover: dec!(1_750_000),
+            },
+        )
+        .await;
+
+        let stats = c.quote_stats("700.HK").unwrap();
+        assert_eq!(stats.last_done, dec!(350.00));
+        assert_eq!(stats.high, dec!(352.00));
+        assert_eq!(stats.volume, 1_000_000);
+        assert_eq!(stats.timestamp.unix_timestamp(), 1_700_000_000);
     }
 }
