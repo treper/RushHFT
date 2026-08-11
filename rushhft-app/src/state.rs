@@ -3,7 +3,8 @@
 #![allow(dead_code)]
 
 use crate::dto::{
-    BookItemDto, ProviderDto, QuoteStatsDto, SessionStatusDto, StudyValueDto, TradeDto,
+    BookItemDto, ChartPointDto, ProviderDto, QuoteStatsDto, SessionStatusDto, StudyValueDto,
+    TradeDto,
 };
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
@@ -50,6 +51,7 @@ pub struct SnapshotStore {
     studies: DashMap<String, DashMap<String, ArcSwap<StudyValueDto>>>,
     trades: DashMap<String, VecDeque<TradeDto>>,
     providers: ArcSwap<Vec<ProviderDto>>,
+    chart_buffers: DashMap<String, DashMap<String, VecDeque<ChartPointDto>>>,
 }
 
 impl SnapshotStore {
@@ -59,6 +61,7 @@ impl SnapshotStore {
             studies: DashMap::new(),
             trades: DashMap::new(),
             providers: ArcSwap::from_pointee(Vec::new()),
+            chart_buffers: DashMap::new(),
         }
     }
 
@@ -93,6 +96,32 @@ impl SnapshotStore {
 
     pub fn set_providers(&self, providers: Vec<ProviderDto>) {
         self.providers.store(Arc::new(providers));
+    }
+
+    /// Push a chart point into the per-symbol, per-kind ring buffer.
+    /// Cap at `cap` points (default 600 = 1min @ 10Hz).
+    pub fn push_chart_point(&self, symbol: &str, kind: &str, point: ChartPointDto, cap: usize) {
+        let per_symbol = self
+            .chart_buffers
+            .entry(symbol.to_string())
+            .or_default();
+        let mut buf = per_symbol.entry(kind.to_string()).or_default();
+        buf.push_back(point);
+        while buf.len() > cap {
+            buf.pop_front();
+        }
+    }
+
+    /// Read up to `points` last points for (symbol, kind). Returns empty vec if none.
+    pub fn chart_series(&self, symbol: &str, kind: &str, points: usize) -> Vec<ChartPointDto> {
+        let Some(per_symbol) = self.chart_buffers.get(symbol) else {
+            return Vec::new();
+        };
+        let Some(buf) = per_symbol.get(kind) else {
+            return Vec::new();
+        };
+        let skip = buf.len().saturating_sub(points);
+        buf.iter().skip(skip).cloned().collect()
     }
 
     pub fn providers(&self) -> Vec<ProviderDto> {
@@ -241,5 +270,55 @@ mod tests {
         let mut syms = store.symbols();
         syms.sort();
         assert_eq!(syms, vec!["700.HK".to_string(), "AAPL.US".to_string()]);
+    }
+
+    #[test]
+    fn push_chart_point_caps_at_default_cap() {
+        let store = SnapshotStore::new();
+        for i in 0..700 {
+            store.push_chart_point(
+                "700.HK",
+                "spread",
+                ChartPointDto {
+                    t: i,
+                    value: dec!(0.05),
+                    bid: None,
+                    ask: None,
+                    mid: None,
+                },
+                600,
+            );
+        }
+        let pts = store.chart_series("700.HK", "spread", 1000);
+        assert_eq!(pts.len(), 600);
+        assert_eq!(pts[0].t, 100);
+    }
+
+    #[test]
+    fn chart_series_returns_last_n() {
+        let store = SnapshotStore::new();
+        for i in 0..50 {
+            store.push_chart_point(
+                "700.HK",
+                "price",
+                ChartPointDto {
+                    t: i,
+                    value: dec!(0),
+                    bid: Some(Decimal::from(i as u32)),
+                    ask: Some(Decimal::from(i as u32 + 1)),
+                    mid: None,
+                },
+                600,
+            );
+        }
+        let pts = store.chart_series("700.HK", "price", 10);
+        assert_eq!(pts.len(), 10);
+        assert_eq!(pts[0].bid, Some(dec!(40)));
+    }
+
+    #[test]
+    fn chart_series_unknown_symbol_returns_empty() {
+        let store = SnapshotStore::new();
+        assert!(store.chart_series("NOPE.HK", "spread", 100).is_empty());
     }
 }
