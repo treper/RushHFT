@@ -19,7 +19,7 @@ pub use plugin::{
     AggregatedCollection, BaseDataRetriever, BaseStudy, Plugin, PluginContext, PluginError,
 };
 
-pub use pool::{ObjectPool, PoolGuard, RollingWindow};
+pub use pool::{ObjectPool, PoolGuard, RollingWindow, RollingWindowF64};
 
 pub use settings::{Settings, SettingsError};
 
