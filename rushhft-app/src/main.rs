@@ -1,6 +1,7 @@
 mod commands;
 mod context;
 mod dto;
+mod notification;
 mod state;
 
 fn main() {

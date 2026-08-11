@@ -18,6 +18,7 @@ pub struct AppState {
     pub settings: Arc<RwLock<Settings>>,
     pub plugin_context: Arc<dyn rushhft_core::plugin::PluginContext>,
     pub trigger_engine: Arc<rushhft_core::TriggerEngine>,
+    pub notification_hub: Arc<crate::notification::NotificationHub>,
 }
 
 impl AppState {
@@ -340,6 +341,15 @@ pub async fn test_trigger_rest(
     test_trigger_rest_inner(&state, rule_id).await
 }
 
+#[tauri::command]
+pub async fn subscribe_notifications(
+    state: tauri::State<'_, AppState>,
+    channel: tauri::ipc::Channel<crate::dto::NotificationPayload>,
+) -> Result<(), String> {
+    state.notification_hub.register(channel).await;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,6 +360,7 @@ mod tests {
         let p_hub = Arc::new(rushhft_core::ProviderHub::new());
         let snapshot_store = Arc::new(SnapshotStore::new());
         let trigger_engine = Arc::new(rushhft_core::TriggerEngine::new());
+        let notification_hub = Arc::new(crate::notification::NotificationHub::new());
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<rushhft_core::MetricEvent>();
         let ctx: Arc<dyn rushhft_core::plugin::PluginContext> = Arc::new(
             crate::context::PluginContextImpl::new(
@@ -366,6 +377,7 @@ mod tests {
             settings: Arc::new(RwLock::new(Settings::default())),
             plugin_context: ctx,
             trigger_engine,
+            notification_hub,
         }
     }
 
