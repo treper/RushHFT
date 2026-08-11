@@ -190,6 +190,70 @@ impl LongPortConnector {
         inner.quote_stats.insert(symbol.to_string(), stats);
     }
 
+    async fn handle_push_event(inner: &Arc<Inner>, event: longport::quote::PushEvent) {
+        let symbol = event.symbol;
+        match event.detail {
+            longport::quote::PushEventDetail::Depth(d) => {
+                Self::on_depth_inner(inner, &symbol, d).await;
+            }
+            longport::quote::PushEventDetail::Brokers(b) => {
+                Self::on_brokers_inner(inner, &symbol, b).await;
+            }
+            longport::quote::PushEventDetail::Trade(t) => {
+                Self::on_trade_inner(inner, &symbol, t).await;
+            }
+            longport::quote::PushEventDetail::Quote(q) => {
+                Self::on_quote_inner(inner, &symbol, q).await;
+            }
+            longport::quote::PushEventDetail::Candlestick(_) => {}
+        }
+    }
+
+    async fn internal_start(inner: Arc<Inner>) -> Result<(), rushhft_core::PluginError> {
+        let settings = &inner.settings;
+        if settings.app_key.is_empty() {
+            return Err(rushhft_core::PluginError::StartFailed(
+                "missing app_key".to_string(),
+            ));
+        }
+
+        let config = longport::Config::from_apikey(
+            settings.app_key.clone(),
+            settings.app_secret.clone(),
+            settings.access_token.clone(),
+        );
+        let (quote_ctx, mut receiver) = longport::QuoteContext::new(Arc::new(config));
+        let quote_ctx = Arc::new(quote_ctx);
+
+        let symbols: Vec<&str> = settings.symbols.iter().map(|s| s.as_str()).collect();
+        quote_ctx
+            .subscribe(symbols.iter().copied(), settings.sub_flags)
+            .await
+            .map_err(|e| {
+                rushhft_core::PluginError::StartFailed(format!("subscribe failed: {}", e))
+            })?;
+
+        *inner.quote_ctx.lock().await = Some(quote_ctx);
+
+        // Spawn consumer task.
+        let inner2 = inner.clone();
+        tokio::spawn(async move {
+            tracing::info!("LongPort consumer task started");
+            loop {
+                match receiver.recv().await {
+                    Some(event) => Self::handle_push_event(&inner2, event).await,
+                    None => break,
+                }
+            }
+            tracing::info!("LongPort consumer task stopped");
+            inner2
+                .status
+                .store(Arc::new(rushhft_core::PluginStatus::Stopped));
+        });
+
+        Ok(())
+    }
+
     async fn on_trade_inner(
         inner: &Arc<Inner>,
         symbol: &str,
