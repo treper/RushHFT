@@ -16,6 +16,7 @@ pub struct AppState {
     pub snapshot_store: Arc<SnapshotStore>,
     pub plugins: Vec<Arc<dyn Plugin>>,
     pub settings: Arc<RwLock<Settings>>,
+    pub plugin_context: Arc<dyn rushhft_core::plugin::PluginContext>,
 }
 
 impl AppState {
@@ -126,15 +127,75 @@ pub async fn get_studies(
     Ok(state.studies_dto())
 }
 
+pub async fn start_plugin_inner(
+    state: &AppState,
+    plugin_id: &str,
+) -> Result<(), String> {
+    let plugin = state
+        .plugins
+        .iter()
+        .find(|p| p.plugin_id() == plugin_id)
+        .ok_or_else(|| format!("plugin not found: {}", plugin_id))?
+        .clone();
+    plugin
+        .start(state.plugin_context.clone())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub async fn stop_plugin_inner(
+    state: &AppState,
+    plugin_id: &str,
+) -> Result<(), String> {
+    let plugin = state
+        .plugins
+        .iter()
+        .find(|p| p.plugin_id() == plugin_id)
+        .ok_or_else(|| format!("plugin not found: {}", plugin_id))?
+        .clone();
+    plugin.stop().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn start_plugin(
+    state: tauri::State<'_, AppState>,
+    plugin_id: String,
+) -> Result<(), String> {
+    start_plugin_inner(&state, &plugin_id).await
+}
+
+#[tauri::command]
+pub async fn stop_plugin(
+    state: tauri::State<'_, AppState>,
+    plugin_id: String,
+) -> Result<(), String> {
+    stop_plugin_inner(&state, &plugin_id).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn make_state(plugins: Vec<Arc<dyn Plugin>>) -> AppState {
+        let ob_hub = Arc::new(rushhft_core::OrderBookHub::new());
+        let t_hub = Arc::new(rushhft_core::TradeHub::new());
+        let p_hub = Arc::new(rushhft_core::ProviderHub::new());
+        let snapshot_store = Arc::new(SnapshotStore::new());
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<rushhft_core::MetricEvent>();
+        let ctx: Arc<dyn rushhft_core::plugin::PluginContext> = Arc::new(
+            crate::context::PluginContextImpl::new(
+                ob_hub,
+                t_hub,
+                p_hub,
+                snapshot_store.clone(),
+                tx,
+            ),
+        );
         AppState {
-            snapshot_store: Arc::new(SnapshotStore::new()),
+            snapshot_store,
             plugins,
             settings: Arc::new(RwLock::new(Settings::default())),
+            plugin_context: ctx,
         }
     }
 
@@ -168,5 +229,26 @@ mod tests {
         assert_eq!(studies.len(), 1);
         assert_eq!(studies[0].name, "VPIN Study");
         assert!(studies[0].emits_metric);
+    }
+
+    #[tokio::test]
+    async fn start_plugin_by_id_invokes_start() {
+        use rushhft_studies::{VpinSettings, VpinStudy};
+        let vpin = Arc::new(VpinStudy::new(VpinSettings::default()));
+        let id = vpin.plugin_id().to_string();
+        let state = make_state(vec![vpin.clone()]);
+        // Before: Loaded
+        assert_eq!(state.studies_dto()[0].status, PluginStatusDto::Loaded);
+        start_plugin_inner(&state, &id).await.unwrap();
+        assert_eq!(state.studies_dto()[0].status, PluginStatusDto::Started);
+        stop_plugin_inner(&state, &id).await.unwrap();
+        assert_eq!(state.studies_dto()[0].status, PluginStatusDto::Stopped);
+    }
+
+    #[tokio::test]
+    async fn start_plugin_unknown_id_returns_error() {
+        let state = make_state(vec![]);
+        let result = start_plugin_inner(&state, "nope").await;
+        assert!(result.is_err());
     }
 }
