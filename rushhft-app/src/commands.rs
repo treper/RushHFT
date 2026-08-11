@@ -218,6 +218,7 @@ pub async fn get_settings_inner(state: &AppState) -> SettingsDto {
         depth_levels: s.depth_levels,
         aggregation_level: map_aggregation(s.aggregation_level),
         log_level: s.log_level.clone(),
+        region: s.region.clone(),
     }
 }
 
@@ -236,6 +237,7 @@ pub async fn save_settings_inner(state: &AppState, dto: SettingsDto) -> Result<(
     s.depth_levels = dto.depth_levels;
     s.aggregation_level = aggregation_from_dto(dto.aggregation_level);
     s.log_level = dto.log_level;
+    s.region = dto.region;
     Ok(())
 }
 
@@ -450,6 +452,7 @@ mod tests {
             depth_levels: 10,
             aggregation_level: crate::dto::AggregationLevelDto::S1,
             log_level: "info".into(),
+            region: "global".into(),
         };
         save_settings_inner(&state, dto.clone()).await.unwrap();
         let loaded = state.settings.read().await;

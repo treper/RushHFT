@@ -10,6 +10,10 @@ pub struct Settings {
     pub depth_levels: usize,
     pub aggregation_level: AggregationLevel,
     pub log_level: String,
+    /// LongPort SDK region override. Default `"global"` pins the international
+    /// endpoint (`*.longportapp.com`) and bypasses the SDK's geo-probe. Set to
+    /// `"cn"` to force the China mainland endpoint (`*.longport.cn`).
+    pub region: String,
 }
 
 impl Default for Settings {
@@ -22,6 +26,7 @@ impl Default for Settings {
             depth_levels: 10,
             aggregation_level: AggregationLevel::S1,
             log_level: "info".to_string(),
+            region: "global".to_string(),
         }
     }
 }
@@ -97,6 +102,7 @@ mod tests {
             depth_levels: 20,
             aggregation_level: AggregationLevel::S5,
             log_level: "debug".into(),
+            region: "global".into(),
         };
         let toml_str = toml::to_string_pretty(&s).unwrap();
         let back: Settings = toml::from_str(&toml_str).unwrap();

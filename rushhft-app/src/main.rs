@@ -21,6 +21,20 @@ async fn main() {
         .init();
 
     let loaded = Settings::load().unwrap_or_default();
+    // The LongPort Rust SDK geo-probes `https://geotest.lbkrs.com` and, on a
+    // 200 response, switches to the `*.longport.cn` endpoints. Those are
+    // unreachable from networks that *can* reach the probe host but *cannot*
+    // reach `openapi.longport.cn` (e.g. this machine). Pin the region from
+    // Settings so the SDK skips the probe and uses the configured endpoint.
+    // `LONGPORT_REGION` is read by the SDK at the first HTTP/WS request, so
+    // setting it here — before any connector code runs — is sufficient.
+    if std::env::var("LONGPORT_REGION").is_err() {
+        // SAFETY: this runs once at process startup before any other thread
+        // could be reading LONGPORT_REGION (no connector or worker task has
+        // been spawned yet). The LongPort SDK reads this env var lazily on
+        // the first HTTP/WS request.
+        unsafe { std::env::set_var("LONGPORT_REGION", &loaded.region) };
+    }
     let settings = Arc::new(RwLock::new(loaded));
 
     let ob_hub = Arc::new(OrderBookHub::new());

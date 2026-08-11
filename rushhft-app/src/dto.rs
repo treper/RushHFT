@@ -135,6 +135,7 @@ pub struct SettingsDto {
     pub depth_levels: usize,
     pub aggregation_level: AggregationLevelDto,
     pub log_level: String,
+    pub region: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
