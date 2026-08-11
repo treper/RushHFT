@@ -164,6 +164,73 @@ impl LongPortConnector {
     pub fn local_book(&self, symbol: &str) -> Option<rushhft_core::OrderBook> {
         self.inner.local_books.get(symbol).map(|e| e.clone())
     }
+
+    pub async fn on_depth(&self, symbol: &str, d: longport::quote::PushDepth) {
+        Self::on_depth_inner(&self.inner, symbol, d).await;
+    }
+
+    async fn on_depth_inner(
+        inner: &Arc<Inner>,
+        symbol: &str,
+        d: longport::quote::PushDepth,
+    ) {
+        let settings = &inner.settings;
+        let provider_id = settings.provider_id;
+
+        // Preserve existing broker_ids per price level before replacing.
+        let mut broker_map: std::collections::HashMap<
+            rust_decimal::Decimal,
+            Vec<i32>,
+        > = std::collections::HashMap::new();
+        if let Some(book) = inner.local_books.get(symbol) {
+            for item in book.bids.iter().chain(book.asks.iter()) {
+                if !item.broker_ids.is_empty() {
+                    broker_map.insert(item.price, item.broker_ids.clone());
+                }
+            }
+        }
+
+        let mut book = rushhft_core::OrderBook::new(
+            symbol,
+            settings.depth_levels,
+            settings.price_decimal_places,
+            settings.size_decimal_places,
+            provider_id,
+        );
+
+        for depth in d.bids {
+            if let Some(price) = depth.price {
+                let size = rust_decimal::Decimal::from(depth.volume);
+                let mut item = rushhft_core::BookItem::new(
+                    price, size, true, symbol, provider_id,
+                );
+                if let Some(brokers) = broker_map.get(&price) {
+                    item.broker_ids = brokers.clone();
+                }
+                book.add_or_update_level(item);
+            }
+        }
+        for depth in d.asks {
+            if let Some(price) = depth.price {
+                let size = rust_decimal::Decimal::from(depth.volume);
+                let mut item = rushhft_core::BookItem::new(
+                    price, size, false, symbol, provider_id,
+                );
+                if let Some(brokers) = broker_map.get(&price) {
+                    item.broker_ids = brokers.clone();
+                }
+                book.add_or_update_level(item);
+            }
+        }
+
+        let book_for_publish = book.clone();
+        inner.local_books.insert(symbol.to_string(), book);
+
+        let ctx = { inner.ctx.lock().await.clone() };
+        if let Some(ctx) = ctx {
+            ctx.publish_order_book(book_for_publish).await;
+        }
+    }
 }
 
 /// FNV-1a 64-bit hash — stable, non-cryptographic identifier for plugin_id.
@@ -269,5 +336,124 @@ mod tests {
         let c1 = LongPortConnector::new(s.clone());
         let c2 = LongPortConnector::new(s);
         assert_eq!(c1.id, c2.id);
+    }
+
+    use async_trait::async_trait;
+    use rushhft_core::plugin::PluginContext;
+    use rushhft_core::{
+        hub::{OrderBookHub, ProviderHub, TradeHub},
+        model::provider::Provider,
+    };
+    use rust_decimal::Decimal;
+    use time::OffsetDateTime;
+
+    struct MockCtx {
+        ob_hub: Arc<OrderBookHub>,
+        t_hub: Arc<TradeHub>,
+        p_hub: Arc<ProviderHub>,
+        published_obs: Arc<dashmap::DashMap<String, rushhft_core::OrderBook>>,
+        published_trades: Arc<std::sync::Mutex<Vec<rushhft_core::Trade>>>,
+        published_providers: Arc<std::sync::Mutex<Vec<Provider>>>,
+    }
+
+    impl MockCtx {
+        fn new() -> Self {
+            Self {
+                ob_hub: Arc::new(OrderBookHub::new()),
+                t_hub: Arc::new(TradeHub::new()),
+                p_hub: Arc::new(ProviderHub::new()),
+                published_obs: Arc::new(dashmap::DashMap::new()),
+                published_trades: Arc::new(std::sync::Mutex::new(Vec::new())),
+                published_providers: Arc::new(std::sync::Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl PluginContext for MockCtx {
+        async fn publish_order_book(&self, ob: rushhft_core::OrderBook) {
+            self.published_obs.insert(ob.symbol.clone(), ob);
+        }
+        async fn publish_trade(&self, t: rushhft_core::Trade) {
+            self.published_trades.lock().unwrap().push(t);
+        }
+        async fn publish_provider(&self, p: Provider) {
+            self.published_providers.lock().unwrap().push(p);
+        }
+        async fn register_metric(
+            &self, _: &str, _: &str, _: &str, _: &str, _: Decimal, _: OffsetDateTime,
+        ) {}
+        fn order_book_hub(&self) -> Arc<OrderBookHub> { self.ob_hub.clone() }
+        fn trade_hub(&self) -> Arc<TradeHub> { self.t_hub.clone() }
+        fn provider_hub(&self) -> Arc<ProviderHub> { self.p_hub.clone() }
+    }
+
+    fn test_connector() -> LongPortConnector {
+        LongPortConnector::new(ConnectorSettings {
+            symbols: vec!["700.HK".into()],
+            depth_levels: 10,
+            price_decimal_places: 2,
+            size_decimal_places: 0,
+            ..ConnectorSettings::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn on_depth_maps_push_depth_to_order_book() {
+        use rust_decimal_macros::dec;
+        let c = test_connector();
+        let ctx = Arc::new(MockCtx::new());
+        c.inner
+            .ctx
+            .lock()
+            .await
+            .replace(ctx.clone() as Arc<dyn PluginContext>);
+
+        let push = longport::quote::PushDepth {
+            asks: vec![
+                longport::quote::Depth {
+                    position: 1,
+                    price: Some(dec!(100.60)),
+                    volume: 400,
+                    order_num: 4,
+                },
+                longport::quote::Depth {
+                    position: 2,
+                    price: Some(dec!(100.65)),
+                    volume: 200,
+                    order_num: 2,
+                },
+            ],
+            bids: vec![
+                longport::quote::Depth {
+                    position: 1,
+                    price: Some(dec!(100.55)),
+                    volume: 500,
+                    order_num: 5,
+                },
+                longport::quote::Depth {
+                    position: 2,
+                    price: Some(dec!(100.50)),
+                    volume: 300,
+                    order_num: 3,
+                },
+            ],
+        };
+        c.on_depth("700.HK", push).await;
+
+        let book = c.local_book("700.HK").unwrap();
+        assert_eq!(book.bids.len(), 2);
+        assert_eq!(book.bids[0].price, dec!(100.55)); // desc
+        assert_eq!(book.bids[1].price, dec!(100.50));
+        assert_eq!(book.asks.len(), 2);
+        assert_eq!(book.asks[0].price, dec!(100.60)); // asc
+        assert_eq!(book.asks[1].price, dec!(100.65));
+        assert_eq!(book.bids[0].cumulative_size, dec!(500));
+        assert_eq!(book.bids[1].cumulative_size, dec!(800));
+        assert!(book.mid_price().unwrap() == dec!(100.575));
+
+        // Published
+        let published = ctx.published_obs.get("700.HK").unwrap();
+        assert_eq!(published.bids.len(), 2);
     }
 }
