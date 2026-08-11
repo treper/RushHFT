@@ -208,6 +208,41 @@ pub struct TriggerActionDto {
     pub rest_body: Option<String>,
 }
 
+#[derive(Serialize, Clone, Debug)]
+pub struct ChartPointDto {
+    pub t: i64,
+    pub value: Decimal,
+    pub bid: Option<Decimal>,
+    pub ask: Option<Decimal>,
+    pub mid: Option<Decimal>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct ChartSeriesDto {
+    pub kind: String,
+    pub points: Vec<ChartPointDto>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct VenuePriceDto {
+    pub venue: String,
+    pub bid: Decimal,
+    pub ask: Decimal,
+    pub last: Decimal,
+    pub timestamp: i64,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct PluginDescriptorDto {
+    pub plugin_id: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub plugin_type: PluginTypeDto,
+    pub status: PluginStatusDto,
+    pub emits_metric: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,5 +302,34 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         assert!(json.contains("\"level\":\"Warning\""));
         assert!(json.contains("\"category\":\"Plugin\""));
+    }
+
+    #[test]
+    fn chart_series_dto_serializes() {
+        let p = ChartPointDto {
+            t: 1_700_000_000_000,
+            value: dec!(0.05),
+            bid: Some(dec!(100)),
+            ask: Some(dec!(101)),
+            mid: Some(dec!(100.5)),
+        };
+        let s = ChartSeriesDto { kind: "spread".into(), points: vec![p] };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"kind\":\"spread\""));
+        assert!(json.contains("\"value\":\"0.05\""));
+    }
+
+    #[test]
+    fn venue_price_dto_serializes() {
+        let v = VenuePriceDto {
+            venue: "LongPort".into(),
+            bid: dec!(100),
+            ask: dec!(101),
+            last: dec!(100.5),
+            timestamp: 1,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("\"venue\":\"LongPort\""));
+        assert!(json.contains("\"bid\":\"100\""));
     }
 }
