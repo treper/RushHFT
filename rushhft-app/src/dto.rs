@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 use rust_decimal::Decimal;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Clone, Debug)]
 pub struct BookItemDto {
@@ -126,7 +126,7 @@ pub enum PluginStatusDto {
     StoppedFailed,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SettingsDto {
     pub app_key: String,
     pub app_secret_masked: String,
@@ -137,7 +137,7 @@ pub struct SettingsDto {
     pub log_level: String,
 }
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
 pub enum AggregationLevelDto {
     None,
