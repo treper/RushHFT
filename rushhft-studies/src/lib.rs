@@ -6,5 +6,5 @@ mod ott_ratio;
 mod vpin;
 
 pub use lob_imbalance::{LobImbalanceSettings, LobImbalanceStudy};
-pub use ott_ratio::{OttRatioSettings};
+pub use ott_ratio::{OttRatioSettings, OttRatioStudy};
 pub use vpin::{VpinSettings, VpinStudy};
