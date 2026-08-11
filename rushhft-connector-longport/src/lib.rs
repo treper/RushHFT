@@ -379,6 +379,136 @@ impl LongPortConnector {
     }
 }
 
+#[async_trait::async_trait]
+impl rushhft_core::plugin::Plugin for LongPortConnector {
+    fn name(&self) -> &str {
+        "LongPort Connector"
+    }
+    fn version(&self) -> &str {
+        &self.version
+    }
+    fn author(&self) -> &str {
+        &self.author
+    }
+    fn description(&self) -> &str {
+        &self.description
+    }
+    fn plugin_type(&self) -> rushhft_core::PluginType {
+        rushhft_core::PluginType::MarketConnector
+    }
+    fn status(&self) -> rushhft_core::PluginStatus {
+        **self.inner.status.load()
+    }
+    fn plugin_id(&self) -> &str {
+        &self.id
+    }
+
+    async fn start(
+        &self,
+        ctx: Arc<dyn rushhft_core::plugin::PluginContext>,
+    ) -> Result<(), rushhft_core::PluginError> {
+        use rushhft_core::model::provider::Provider;
+        use rushhft_core::model::enums::SessionStatus;
+
+        let cur = **self.inner.status.load();
+        if cur == rushhft_core::PluginStatus::Started
+            || cur == rushhft_core::PluginStatus::Starting
+        {
+            return Err(rushhft_core::PluginError::AlreadyRunning(
+                self.name().to_string(),
+            ));
+        }
+        self.inner
+            .status
+            .store(Arc::new(rushhft_core::PluginStatus::Starting));
+
+        // Early credential check (avoids burning reconnect attempts).
+        if self.inner.settings.app_key.is_empty() {
+            self.inner
+                .status
+                .store(Arc::new(rushhft_core::PluginStatus::StoppedFailed));
+            ctx.publish_provider(Provider {
+                id: self.inner.settings.provider_id,
+                name: "LongPort".to_string(),
+                status: SessionStatus::DisconnectedFailed,
+            })
+            .await;
+            return Err(rushhft_core::PluginError::StartFailed(
+                "missing app_key".to_string(),
+            ));
+        }
+
+        *self.inner.ctx.lock().await = Some(ctx.clone());
+
+        let inner = self.inner.clone();
+        let result = self
+            .base
+            .start_with_reconnect(ctx.clone(), move || {
+                let inner = inner.clone();
+                Box::pin(async move { Self::internal_start(inner).await })
+            })
+            .await;
+
+        let provider_id = self.inner.settings.provider_id;
+        match &result {
+            Ok(()) => {
+                self.inner
+                    .status
+                    .store(Arc::new(rushhft_core::PluginStatus::Started));
+                ctx.publish_provider(Provider {
+                    id: provider_id,
+                    name: "LongPort".to_string(),
+                    status: SessionStatus::Connected,
+                })
+                .await;
+            }
+            Err(e) => {
+                self.inner
+                    .status
+                    .store(Arc::new(rushhft_core::PluginStatus::StoppedFailed));
+                tracing::error!(error = %e, "LongPort connector failed to start");
+                ctx.publish_provider(Provider {
+                    id: provider_id,
+                    name: "LongPort".to_string(),
+                    status: SessionStatus::DisconnectedFailed,
+                })
+                .await;
+            }
+        }
+        result
+    }
+
+    async fn stop(&self) -> Result<(), rushhft_core::PluginError> {
+        use rushhft_core::model::provider::Provider;
+        use rushhft_core::model::enums::SessionStatus;
+
+        self.inner
+            .status
+            .store(Arc::new(rushhft_core::PluginStatus::Stopping));
+        self.inner
+            .stop_flag
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        // Drop the QuoteContext — cascade stops the consumer.
+        let _ = self.inner.quote_ctx.lock().await.take();
+
+        self.inner
+            .status
+            .store(Arc::new(rushhft_core::PluginStatus::Stopped));
+
+        let ctx = { self.inner.ctx.lock().await.clone() };
+        if let Some(ctx) = ctx {
+            ctx.publish_provider(Provider {
+                id: self.inner.settings.provider_id,
+                name: "LongPort".to_string(),
+                status: SessionStatus::Disconnected,
+            })
+            .await;
+        }
+        Ok(())
+    }
+}
+
 /// FNV-1a 64-bit hash — stable, non-cryptographic identifier for plugin_id.
 fn fnv1a_64(s: &str) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
@@ -486,6 +616,7 @@ mod tests {
 
     use async_trait::async_trait;
     use rushhft_core::plugin::PluginContext;
+    use rushhft_core::Plugin;
     use rushhft_core::{
         hub::{OrderBookHub, ProviderHub, TradeHub},
         model::provider::Provider,
@@ -877,5 +1008,48 @@ mod tests {
         assert_eq!(stats.high, dec!(352.00));
         assert_eq!(stats.volume, 1_000_000);
         assert_eq!(stats.timestamp.unix_timestamp(), 1_700_000_000);
+    }
+
+    #[tokio::test]
+    async fn plugin_metadata() {
+        let c = test_connector();
+        assert_eq!(c.name(), "LongPort Connector");
+        assert_eq!(c.plugin_type(), rushhft_core::PluginType::MarketConnector);
+        assert!(!c.plugin_id().is_empty());
+    }
+
+    #[tokio::test]
+    async fn plugin_start_with_empty_credentials_returns_error() {
+        let c = LongPortConnector::new(ConnectorSettings {
+            app_key: String::new(),
+            ..ConnectorSettings::default()
+        });
+        let ctx = Arc::new(MockCtx::new());
+        let result =
+            rushhft_core::plugin::Plugin::start(&c, ctx.clone() as Arc<dyn PluginContext>).await;
+        assert!(result.is_err());
+        assert_eq!(c.status(), rushhft_core::PluginStatus::StoppedFailed);
+        // Provider DisconnectedFailed published
+        let providers = ctx.published_providers.lock().unwrap().clone();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(
+            providers[0].status,
+            rushhft_core::SessionStatus::DisconnectedFailed
+        );
+    }
+
+    #[tokio::test]
+    async fn plugin_start_when_already_started_returns_already_running() {
+        let c = test_connector();
+        c.inner
+            .status
+            .store(Arc::new(rushhft_core::PluginStatus::Started));
+        let ctx = Arc::new(MockCtx::new());
+        let result =
+            rushhft_core::plugin::Plugin::start(&c, ctx.clone() as Arc<dyn PluginContext>).await;
+        assert!(matches!(
+            result,
+            Err(rushhft_core::PluginError::AlreadyRunning(_))
+        ));
     }
 }
