@@ -704,4 +704,42 @@ mod tests {
         remove_symbol_inner(&state, "700.HK").await.unwrap();
         assert!(list_user_symbols_inner(&state).await.is_empty());
     }
+
+    #[tokio::test]
+    async fn end_to_end_snapshot_and_chart_series_round_trip() {
+        use rushhft_core::model::book_item::BookItem;
+        use rushhft_core::model::order_book::OrderBook;
+        use rust_decimal_macros::dec;
+        use time::OffsetDateTime;
+
+        let state = make_state(vec![]);
+
+        // Publish a book via the context path.
+        let mut ob = OrderBook::new("700.HK", 10, 2, 0, 1);
+        ob.add_or_update_level(BookItem::new(dec!(100.50), dec!(500), true, "700.HK", 1));
+        ob.add_or_update_level(BookItem::new(dec!(100.60), dec!(300), false, "700.HK", 1));
+        ob.last_updated = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        state.plugin_context.publish_order_book(ob).await;
+
+        // get_snapshot returns the book.
+        let snap = state.snapshot_dto("700.HK");
+        assert_eq!(snap.bids.len(), 1);
+        assert_eq!(snap.asks.len(), 1);
+        assert_eq!(snap.provider_status, SessionStatusDto::Connected);
+
+        // get_chart_series returns non-empty for "spread" and "price".
+        let spread_series = get_chart_series_inner(&state, "700.HK", "spread", 100).await;
+        assert_eq!(spread_series.points.len(), 1);
+        assert!(spread_series.points[0].value > Decimal::ZERO);
+
+        let price_series = get_chart_series_inner(&state, "700.HK", "price", 100).await;
+        assert_eq!(price_series.points.len(), 1);
+        assert_eq!(price_series.points[0].bid, Some(dec!(100.50)));
+
+        // get_multi_venue_prices returns one row for LongPort.
+        let prices = get_multi_venue_prices_inner(&state, "700.HK").await;
+        assert_eq!(prices.len(), 1);
+        assert_eq!(prices[0].venue, "LongPort");
+        assert_eq!(prices[0].bid, dec!(100.50));
+    }
 }
