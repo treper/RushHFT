@@ -2,7 +2,9 @@
 //! writes via ArcSwap::store (replaces whole Arc).
 #![allow(dead_code)]
 
-use crate::dto::{BookItemDto, ProviderDto, QuoteStatsDto, SessionStatusDto, StudyValueDto, TradeDto};
+use crate::dto::{
+    BookItemDto, ProviderDto, QuoteStatsDto, SessionStatusDto, StudyValueDto, TradeDto,
+};
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use rust_decimal::Decimal;
@@ -61,15 +63,12 @@ impl SnapshotStore {
     }
 
     pub fn update_book(&self, symbol: &str, build: impl FnOnce(&mut SymbolSnapshot)) {
-        let entry = self
-            .books
-            .entry(symbol.to_string())
-            .or_insert_with(|| {
-                ArcSwap::from_pointee(SymbolSnapshot {
-                    symbol: symbol.to_string(),
-                    ..Default::default()
-                })
-            });
+        let entry = self.books.entry(symbol.to_string()).or_insert_with(|| {
+            ArcSwap::from_pointee(SymbolSnapshot {
+                symbol: symbol.to_string(),
+                ..Default::default()
+            })
+        });
         let current = entry.load();
         let mut next: SymbolSnapshot = (**current).clone();
         build(&mut next);
@@ -77,10 +76,7 @@ impl SnapshotStore {
     }
 
     pub fn update_study(&self, symbol: &str, name: &str, v: StudyValueDto) {
-        let per_symbol = self
-            .studies
-            .entry(symbol.to_string())
-            .or_default();
+        let per_symbol = self.studies.entry(symbol.to_string()).or_default();
         let entry = per_symbol
             .entry(name.to_string())
             .or_insert_with(|| ArcSwap::from_pointee(v.clone()));
@@ -88,10 +84,7 @@ impl SnapshotStore {
     }
 
     pub fn append_trade(&self, symbol: &str, t: TradeDto) {
-        let mut entry = self
-            .trades
-            .entry(symbol.to_string())
-            .or_default();
+        let mut entry = self.trades.entry(symbol.to_string()).or_default();
         entry.push_back(t);
         while entry.len() > 200 {
             entry.pop_front();
@@ -116,10 +109,8 @@ impl SnapshotStore {
         let mut snap: SymbolSnapshot = (**books_entry.load()).clone();
 
         if let Some(per_symbol) = self.studies.get(symbol) {
-            let mut studies: Vec<StudyValueDto> = per_symbol
-                .iter()
-                .map(|e| (**e.load()).clone())
-                .collect();
+            let mut studies: Vec<StudyValueDto> =
+                per_symbol.iter().map(|e| (**e.load()).clone()).collect();
             studies.sort_by(|a, b| a.name.cmp(&b.name));
             snap.studies = studies;
         }

@@ -42,15 +42,14 @@ async fn main() {
         });
     }
 
-    let plugin_context: Arc<dyn rushhft_core::plugin::PluginContext> = Arc::new(
-        PluginContextImpl::new(
+    let plugin_context: Arc<dyn rushhft_core::plugin::PluginContext> =
+        Arc::new(PluginContextImpl::new(
             ob_hub.clone(),
             t_hub.clone(),
             p_hub.clone(),
             snapshot_store.clone(),
             metric_tx,
-        ),
-    );
+        ));
 
     let settings_snapshot = settings.read().await.clone();
     let first_symbol = settings_snapshot
@@ -120,9 +119,8 @@ async fn main() {
             let settings_inner = settings_for_setup.clone();
             tokio::spawn(async move {
                 let s = settings_inner.read().await;
-                let has_credentials = !s.app_key.is_empty()
-                    && !s.app_secret.is_empty()
-                    && !s.access_token.is_empty();
+                let has_credentials =
+                    !s.app_key.is_empty() && !s.app_secret.is_empty() && !s.access_token.is_empty();
                 drop(s);
                 if has_credentials {
                     for p in &plugins_inner {

@@ -6,8 +6,8 @@ use crate::dto::{
     SettingsDto, SnapshotDto, StudyDescriptorDto,
 };
 use crate::state::{SnapshotStore, SymbolSnapshot};
-use rushhft_core::plugin::Plugin;
 use rushhft_core::Settings;
+use rushhft_core::plugin::Plugin;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -62,7 +62,10 @@ impl AppState {
     }
 
     pub fn studies_dto(&self) -> Vec<StudyDescriptorDto> {
-        self.plugins.iter().map(|p| self.descriptor_for(p)).collect()
+        self.plugins
+            .iter()
+            .map(|p| self.descriptor_for(p))
+            .collect()
     }
 }
 
@@ -129,10 +132,7 @@ pub async fn get_studies(
     Ok(state.studies_dto())
 }
 
-pub async fn start_plugin_inner(
-    state: &AppState,
-    plugin_id: &str,
-) -> Result<(), String> {
+pub async fn start_plugin_inner(state: &AppState, plugin_id: &str) -> Result<(), String> {
     let plugin = state
         .plugins
         .iter()
@@ -145,10 +145,7 @@ pub async fn start_plugin_inner(
         .map_err(|e| e.to_string())
 }
 
-pub async fn stop_plugin_inner(
-    state: &AppState,
-    plugin_id: &str,
-) -> Result<(), String> {
+pub async fn stop_plugin_inner(state: &AppState, plugin_id: &str) -> Result<(), String> {
     let plugin = state
         .plugins
         .iter()
@@ -275,10 +272,7 @@ pub async fn delete_trigger_inner(state: &AppState, rule_id: i64) -> Result<(), 
     Ok(())
 }
 
-pub async fn test_trigger_rest_inner(
-    state: &AppState,
-    rule_id: i64,
-) -> Result<String, String> {
+pub async fn test_trigger_rest_inner(state: &AppState, rule_id: i64) -> Result<String, String> {
     let rules = state.trigger_engine.get_rules().await;
     let rule = rules
         .into_iter()
@@ -326,10 +320,7 @@ pub async fn save_trigger(
 }
 
 #[tauri::command]
-pub async fn delete_trigger(
-    state: tauri::State<'_, AppState>,
-    rule_id: i64,
-) -> Result<(), String> {
+pub async fn delete_trigger(state: tauri::State<'_, AppState>, rule_id: i64) -> Result<(), String> {
     delete_trigger_inner(&state, rule_id).await
 }
 
@@ -362,15 +353,14 @@ mod tests {
         let trigger_engine = Arc::new(rushhft_core::TriggerEngine::new());
         let notification_hub = Arc::new(crate::notification::NotificationHub::new());
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<rushhft_core::MetricEvent>();
-        let ctx: Arc<dyn rushhft_core::plugin::PluginContext> = Arc::new(
-            crate::context::PluginContextImpl::new(
+        let ctx: Arc<dyn rushhft_core::plugin::PluginContext> =
+            Arc::new(crate::context::PluginContextImpl::new(
                 ob_hub,
                 t_hub,
                 p_hub,
                 snapshot_store.clone(),
                 tx,
-            ),
-        );
+            ));
         AppState {
             snapshot_store,
             plugins,
@@ -468,8 +458,8 @@ mod tests {
     }
 
     use rushhft_core::{
-        ActionType, ConditionOperator, RestApiConfig, TimeWindow, TimeWindowUnit,
-        TriggerAction, TriggerCondition, TriggerRule,
+        ActionType, ConditionOperator, RestApiConfig, TimeWindow, TimeWindowUnit, TriggerAction,
+        TriggerCondition, TriggerRule,
     };
     use rust_decimal_macros::dec;
 

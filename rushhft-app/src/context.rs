@@ -6,9 +6,7 @@ use crate::dto::{
 };
 use crate::state::SnapshotStore;
 use rushhft_core::model::book_item::BookItem;
-use rushhft_core::model::enums::{
-    SessionStatus, TradeDirection as CoreTradeDirection,
-};
+use rushhft_core::model::enums::{SessionStatus, TradeDirection as CoreTradeDirection};
 use rushhft_core::model::order_book::OrderBook;
 use rushhft_core::model::provider::Provider;
 use rushhft_core::model::trade::Trade;
