@@ -61,6 +61,44 @@ impl PluginContext for PluginContextImpl {
             snap.sequence = ob.sequence;
             snap.provider_status = SessionStatusDto::Connected;
         });
+
+        // Push chart-series points.
+        use crate::dto::ChartPointDto;
+        let spread = ob.spread().unwrap_or(Decimal::ZERO);
+        let mid = ob.mid_price().unwrap_or(Decimal::ZERO);
+        let bid_top = ob.bids.first().map(|l| l.price);
+        let ask_top = ob.asks.first().map(|l| l.price);
+        let t_ms = (ob.last_updated.unix_timestamp_nanos() / 1_000_000) as i64;
+
+        self.snapshot_store.push_chart_point(
+            &symbol,
+            "spread",
+            ChartPointDto { t: t_ms, value: spread, bid: bid_top, ask: ask_top, mid: Some(mid) },
+            600,
+        );
+        self.snapshot_store.push_chart_point(
+            &symbol,
+            "price",
+            ChartPointDto { t: t_ms, value: mid, bid: bid_top, ask: ask_top, mid: Some(mid) },
+            600,
+        );
+        // Cumulative bids: series of (price, cumulative size) — flattened into
+        // one value per push = best-bid cumulative size for MVP (frontend
+        // reconstructs full ladder from snapshot.asks/bids).
+        let cum_bid = ob.bids.first().map(|l| l.cumulative_size).unwrap_or(Decimal::ZERO);
+        let cum_ask = ob.asks.first().map(|l| l.cumulative_size).unwrap_or(Decimal::ZERO);
+        self.snapshot_store.push_chart_point(
+            &symbol,
+            "cumulative-bids",
+            ChartPointDto { t: t_ms, value: cum_bid, bid: bid_top, ask: ask_top, mid: None },
+            600,
+        );
+        self.snapshot_store.push_chart_point(
+            &symbol,
+            "cumulative-asks",
+            ChartPointDto { t: t_ms, value: cum_ask, bid: bid_top, ask: ask_top, mid: None },
+            600,
+        );
     }
 
     async fn publish_trade(&self, t: Trade) {
@@ -277,5 +315,21 @@ mod tests {
         assert_eq!(snap.studies.len(), 1);
         assert_eq!(snap.studies[0].value, dec!(0.5));
         assert_eq!(snap.studies[0].name, "VPIN");
+    }
+
+    #[tokio::test]
+    async fn publish_order_book_pushes_chart_points() {
+        let (ctx, store) = make_ctx();
+        let mut ob = OrderBook::new("700.HK", 10, 2, 0, 1);
+        ob.add_or_update_level(BookItem::new(dec!(100.50), dec!(500), true, "700.HK", 1));
+        ob.add_or_update_level(BookItem::new(dec!(100.60), dec!(300), false, "700.HK", 1));
+        ctx.publish_order_book(ob).await;
+
+        let spread_pts = store.chart_series("700.HK", "spread", 100);
+        assert_eq!(spread_pts.len(), 1);
+        assert!(spread_pts[0].value > dec!(0));
+        let price_pts = store.chart_series("700.HK", "price", 100);
+        assert_eq!(price_pts.len(), 1);
+        assert!(price_pts[0].bid.is_some());
     }
 }
