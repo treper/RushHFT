@@ -1,123 +1,123 @@
 # RushHFT
 
-Real-time market microstructure analysis desktop app — Rust + Tauri 2 rewrite of VisualHFT (C# WPF).
+VisualHFT（C# WPF 桌面端实时市场微观结构分析工具）的 Rust + Tauri 2 重写版本。
 
-Workspace of 4 crates:
+4 个 crate 组成的工作空间：
 
-| Crate | Role |
+| Crate | 职责 |
 |---|---|
-| `rushhft-core` | Domain model (order book, trades, quotes), plugin context, trigger engine, settings |
-| `rushhft-connector-longport` | LongPort broker connector (WebSocket market data + REST) |
-| `rushhft-studies` | Real-time studies: VPIN, LOB Imbalance |
-| `rushhft-app` | Tauri 2 binary crate — desktop app + Svelte 5 frontend |
+| `rushhft-core` | 领域模型（订单簿、成交流、报价）、插件上下文、触发引擎、配置 |
+| `rushhft-connector-longport` | LongPort 券商接入（WebSocket 行情 + REST 交易） |
+| `rushhft-studies` | 实时研究指标：VPIN、LOB Imbalance |
+| `rushhft-app` | Tauri 2 二进制 crate —— 桌面应用 + Svelte 5 前端 |
 
-## Repository layout
+## 仓库结构
 
 ```
-Cargo.toml                       # workspace (resolver="3", edition 2024)
+Cargo.toml                       # workspace（resolver="3"，edition 2024）
 rust-toolchain.toml
-rushhft-core/                    # shared domain + plugin SDK
-rushhft-connector-longport/      # LongPort integration
+rushhft-core/                    # 共享领域 + 插件 SDK
+rushhft-connector-longport/       # LongPort 集成
 rushhft-studies/                  # VPIN + LOB Imbalance
-rushhft-app/                     # Tauri binary crate
+rushhft-app/                     # Tauri 二进制 crate
 ├── Cargo.toml
-├── tauri.conf.json              # Tauri config (flat layout, at crate root)
+├── tauri.conf.json              # Tauri 配置（扁平结构，位于 crate 根目录）
 ├── build.rs
 ├── icons/icon.png
-├── src/                         # Rust: main.rs, commands, state, dto, context, notification
-└── ui/                          # SvelteKit + Vite frontend
+├── src/                         # Rust：main.rs、commands、state、dto、context、notification
+└── ui/                          # SvelteKit + Vite 前端
     ├── package.json
     ├── vite.config.ts
     ├── svelte.config.js
-    └── src/routes/+page.svelte  # main dashboard (depth ladder / trades / studies)
+    └── src/routes/+page.svelte  # 主仪表盘（深度梯 / 成交 / 研究指标）
 docs/
 └── superpowers/
-    ├── specs/                   # design spec
-    └── plans/                   # TDD implementation plans (core / connector / studies / app)
+    ├── specs/                   # 设计文档
+    └── plans/                   # TDD 实现计划（core / connector / studies / app）
 ```
 
-## Prerequisites
+## 前置条件
 
-- **Rust toolchain** (stable, edition 2024) — `rustup show`
-- **Node.js** + **pnpm** — for the Svelte frontend
-- **Tauri CLI** (optional, only for `cargo tauri dev`/`cargo tauri build`):
+- **Rust 工具链**（stable，edition 2024）—— `rustup show`
+- **Node.js** + **pnpm** —— 用于 Svelte 前端
+- **Tauri CLI**（可选，仅 `cargo tauri dev`/`cargo tauri build` 需要）：
   ```bash
   cargo install tauri-cli --version "^2" --locked
   ```
-  If crates.io is slow from your network, set an HTTP proxy first:
+  如果网络访问 crates.io 太慢，先设置 HTTP 代理：
   ```bash
   export http_proxy=http://127.0.0.1:10808 https_proxy=http://127.0.0.1:10808 \
          HTTP_PROXY=http://127.0.0.1:10808 HTTPS_PROXY=http://127.0.0.1:10808 \
          ALL_PROXY=socks5://127.0.0.1:10808
   ```
-- **LongPort credentials** (only for live market data — app launches fine without them):
-  - `app_key`, `app_secret`, `access_token` from the LongPort OpenAPI console
+- **LongPort 凭证**（仅获取实盘行情需要，没有也能启动）：
+  - `app_key`、`app_secret`、`access_token`，从 LongPort OpenAPI 控制台获取
 
-## Build
+## 构建
 
-### 1. Build the frontend
+### 1. 构建前端
 
 ```bash
 cd rushhft-app/ui
 pnpm install
-pnpm build         # outputs static site to rushhft-app/ui/build/
+pnpm build         # 输出静态站点到 rushhft-app/ui/build/
 ```
 
-### 2. Build the Rust workspace
+### 2. 构建 Rust workspace
 
-From the workspace root:
+在 workspace 根目录执行：
 
 ```bash
-# All crates
+# 全部 crate
 cargo build --release
 
-# Or just the app (uses ../ui/build for frontendDist)
+# 或只构建 app（使用 ../ui/build 作为 frontendDist）
 cargo build -p rushhft-app --release
 ```
 
-Binary: `target/release/rushhft-app` (~24 MB, optimized).
+产物：`target/release/rushhft-app`（约 24 MB，已优化）。
 
-## Run
+## 运行
 
-### Option A — Release binary (simplest, no dev server needed)
+### 方式 A —— Release 二进制（最简单，不需要 dev server）
 
 ```bash
 ./target/release/rushhft-app
 ```
 
-The desktop window opens at 1400×900 with the prebuilt UI from `rushhft-app/ui/build/`.
+桌面窗口以 1400×900 打开，前端来自 `rushhft-app/ui/build/`。
 
-### Option B — Dev mode (hot-reload UI via Vite)
+### 方式 B —— Dev 模式（Vite 热重载）
 
 ```bash
 cd rushhft-app
 cargo tauri dev
 ```
 
-Tauri CLI will run `pnpm dev` (`beforeDevCommand`) to start Vite on `http://localhost:5173`, then launch the debug binary pointed at that dev URL. Edit `ui/src/routes/+page.svelte` and the window hot-reloads.
+Tauri CLI 会执行 `pnpm dev`（`beforeDevCommand`）启动 Vite 到 `http://localhost:5173`，然后启动指向该 dev URL 的 debug 二进制。修改 `ui/src/routes/+page.svelte` 后窗口会热重载。
 
-### Option C — Bundle a macOS `.app`
+### 方式 C —— 打包 macOS `.app`
 
 ```bash
 cd rushhft-app
 cargo tauri build
 ```
 
-Output: `target/release/bundle/macos/RushHFT.app` (and a `.dmg`).
+产物：`target/release/bundle/macos/RushHFT.app`（以及 `.dmg`）。
 
-## Configuration
+## 配置
 
-Settings are loaded from a TOML file under the platform config dir:
+配置从平台配置目录下的 TOML 文件加载：
 
-| OS | Path |
+| 系统 | 路径 |
 |---|---|
 | macOS | `~/Library/Application Support/RushHFT/config.toml` |
-| Linux | `~/.config/RushHFT/config.toml` |
+| Linux | `~/.config/RushHft/config.toml` |
 | Windows | `%APPDATA%\RushHFT\config.toml` |
 
-If the file is missing, `Settings::default()` is used (empty credentials, default symbol `700.HK`, depth 10).
+如果文件不存在，使用 `Settings::default()`（凭证为空，默认标的 `700.HK`，深度 10 档）。
 
-### Minimal config with LongPort credentials
+### 包含 LongPort 凭证的最小配置
 
 ```toml
 app_key = "aa1645c32ef6e1adf55eab4bf0d6498c"
@@ -129,61 +129,61 @@ aggregation_level = "S1"
 log_level = "info"
 ```
 
-Alternatively, call the `save_settings` IPC command from the frontend — it writes the same file via `Settings::save()`.
+也可以从前端调用 `save_settings` IPC 命令 —— 它会通过 `Settings::save()` 写同一个文件。
 
-### Auto-start behavior
+### 自动启动行为
 
-On launch, the setup hook checks whether `app_key`, `app_secret`, and `access_token` are all non-empty. If so, it auto-starts:
+启动时，setup hook 会检查 `app_key`、`app_secret`、`access_token` 是否都非空。如果都有，会自动启动：
 
-- **LongPortConnector** — subscribes to depth + trades for each `default_symbol`
-- **VpinStudy** — consumes order book + trade events, emits VPIN metrics
-- **LobImbalanceStudy** — consumes order book events, emits imbalance metrics
+- **LongPortConnector** —— 订阅每个 `default_symbol` 的深度 + 成交
+- **VpinStudy** —— 消费订单簿 + 成交事件，输出 VPIN 指标
+- **LobImbalanceStudy** —— 消费订单簿事件，输出 imbalance 指标
 
-If credentials are missing, the window still opens — the depth ladder / trades / studies panels just show empty until you provide credentials and call `start_plugin` via the `save_settings` IPC.
+如果凭证缺失，窗口依然会打开 —— 只是深度梯 / 成交 / 研究指标面板会是空的，直到你提供凭证并通过 `save_settings` IPC 调用 `start_plugin`。
 
-## IPC commands
+## IPC 命令
 
-Registered in `rushhft-app/src/commands.rs`:
+在 `rushhft-app/src/commands.rs` 中注册：
 
-| Command | Purpose |
+| 命令 | 用途 |
 |---|---|
-| `get_snapshot` | Current depth + trades + studies for a symbol |
-| `get_providers` | Connector status list |
-| `get_symbols` | Configured symbol list |
-| `get_studies` | Study descriptors + status |
-| `start_plugin` / `stop_plugin` | Control plugins by name |
-| `get_settings` / `save_settings` | Read/write config TOML |
-| `get_triggers` / `save_trigger` / `delete_trigger` | Manage trigger rules |
-| `test_trigger_rest` | Dry-run a trigger against recent metrics |
-| `subscribe_notifications` | Open a `Channel<NotificationPayload>` for trigger fires |
+| `get_snapshot` | 某个标的的当前深度 + 成交 + 研究指标 |
+| `get_providers` | Connector 状态列表 |
+| `get_symbols` | 配置的标的列表 |
+| `get_studies` | 研究指标描述符 + 状态 |
+| `start_plugin` / `stop_plugin` | 按名字控制插件 |
+| `get_settings` / `save_settings` | 读写配置 TOML |
+| `get_triggers` / `save_trigger` / `delete_trigger` | 管理触发规则 |
+| `test_trigger_rest` | 针对最近指标试跑一个触发器 |
+| `subscribe_notifications` | 打开 `Channel<NotificationPayload>` 接收触发通知 |
 
-The frontend (`+page.svelte`) polls `get_snapshot` / `get_providers` / `get_studies` every 500 ms via `@tauri-apps/api/core` `invoke`.
+前端（`+page.svelte`）每 500ms 通过 `@tauri-apps/api/core` 的 `invoke` 轮询 `get_snapshot` / `get_providers` / `get_studies`。
 
-## Tests
+## 测试
 
 ```bash
-# Workspace tests
+# Workspace 全部测试
 cargo test --workspace
 
 # Clippy
 cargo clippy --workspace --all-targets -- -D warnings
 
-# Format check
+# 格式检查
 cargo fmt --all -- --check
 
-# Frontend type check
+# 前端类型检查
 cd rushhft-app/ui && pnpm check
 ```
 
-Each crate follows TDD — see the plan docs under `docs/superpowers/plans/`.
+每个 crate 遵循 TDD，详见 `docs/superpowers/plans/` 下的计划文档。
 
-## Architecture notes
+## 架构要点
 
-- **Lock-free snapshot reads**: `SnapshotStore` uses `DashMap<String, ArcSwap<SymbolSnapshot>>` — readers never block writers.
-- **Plugin context**: `PluginContextImpl` wraps the order book hub, trade hub, and trigger engine. Plugins receive an `Arc<dyn PluginContext>` on `start()`.
-- **Notification fan-out**: `NotificationHub` keeps a `Mutex<Vec<Channel<NotificationPayload>>>` — multiple frontends can subscribe at once.
-- **Decimal precision**: `rust_decimal::Decimal` serialized as string (`serde-with-str` feature) to avoid float precision loss across IPC.
-- **Time handling**: `OffsetDateTime::unix_timestamp_nanos()` returns `i128`; cast to i64 ms via `(value / 1_000_000) as i64`.
+- **无锁快照读取**：`SnapshotStore` 用 `DashMap<String, ArcSwap<SymbolSnapshot>>` —— 读不会阻塞写。
+- **插件上下文**：`PluginContextImpl` 封装订单簿 hub、成交 hub 和触发引擎。插件在 `start()` 时收到一个 `Arc<dyn PluginContext>`。
+- **通知扇出**：`NotificationHub` 用 `Mutex<Vec<Channel<NotificationPayload>>>` —— 多个前端可同时订阅。
+- **Decimal 精度**：`rust_decimal::Decimal` 用字符串序列化（`serde-with-str` feature），避免 IPC 传输时浮点精度丢失。
+- **时间处理**：`OffsetDateTime::unix_timestamp_nanos()` 返回 `i128`，需要 `(value / 1_000_000) as i64` 转成 i64 毫秒。
 
 ## License
 
