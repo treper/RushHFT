@@ -1,7 +1,7 @@
 # /Cargo.toml
 [workspace]
 resolver = "3"
-members = ["rushhft-core", "rushhft-studies"]
+members = ["rushhft-core", "rushhft-connector-longport", "rushhft-studies"]
 
 [workspace.package]
 edition = "2024"
