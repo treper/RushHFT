@@ -7,11 +7,11 @@ use async_trait::async_trait;
 use rushhft_connector_longport::{ConnectorSettings, LongPortConnector};
 use rushhft_core::plugin::{Plugin, PluginContext};
 use rushhft_core::{
+    PluginStatus, PluginType, TradeDirection,
     hub::{OrderBookHub, ProviderHub, TradeHub},
     model::order_book::OrderBook,
     model::provider::Provider,
     model::trade::Trade,
-    PluginStatus, PluginType, TradeDirection,
 };
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;

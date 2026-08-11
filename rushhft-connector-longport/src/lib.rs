@@ -4,6 +4,8 @@
 //! `rushhft_core::Plugin` and maps `PushEvent` pushes to normalized
 //! `rushhft_core` domain models.
 
+pub use rushhft_core;
+
 #[derive(Debug, Clone)]
 pub struct ConnectorSettings {
     pub app_key: String,
@@ -88,9 +90,7 @@ impl From<longport::quote::PushQuote> for QuoteStats {
 /// orphan rule forbids `impl From<ForeignType> for OtherForeignType` —
 /// neither `longport::quote::TradeDirection` nor `rushhft_core::TradeDirection`
 /// is defined in this crate.
-pub fn map_trade_direction(
-    d: longport::quote::TradeDirection,
-) -> rushhft_core::TradeDirection {
+pub fn map_trade_direction(d: longport::quote::TradeDirection) -> rushhft_core::TradeDirection {
     match d {
         longport::quote::TradeDirection::Neutral => rushhft_core::TradeDirection::Neutral,
         longport::quote::TradeDirection::Down => rushhft_core::TradeDirection::Down,
@@ -98,14 +98,13 @@ pub fn map_trade_direction(
     }
 }
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use dashmap::DashMap;
 use rushhft_core::plugin::BaseDataRetriever;
 
 #[allow(clippy::type_complexity)]
-#[allow(dead_code)]
 struct Inner {
     settings: ConnectorSettings,
     local_books: DashMap<String, rushhft_core::OrderBook>,
@@ -116,7 +115,6 @@ struct Inner {
     status: arc_swap::ArcSwap<rushhft_core::PluginStatus>,
 }
 
-#[allow(dead_code)]
 pub struct LongPortConnector {
     id: String,
     version: String,
@@ -132,7 +130,9 @@ impl LongPortConnector {
             "{:x}",
             fnv1a_64(&format!(
                 "LongPortConnector{}{}{}",
-                settings.provider_id, settings.app_key, settings.symbols.join(",")
+                settings.provider_id,
+                settings.app_key,
+                settings.symbols.join(",")
             ))
         );
         Self {
@@ -166,10 +166,7 @@ impl LongPortConnector {
     }
 
     /// Set the PluginContext. Used by tests and by the app's setup phase.
-    pub async fn set_context(
-        &self,
-        ctx: Arc<dyn rushhft_core::plugin::PluginContext>,
-    ) {
+    pub async fn set_context(&self, ctx: Arc<dyn rushhft_core::plugin::PluginContext>) {
         *self.inner.ctx.lock().await = Some(ctx);
     }
 
@@ -189,11 +186,7 @@ impl LongPortConnector {
         Self::on_quote_inner(&self.inner, symbol, q).await;
     }
 
-    async fn on_quote_inner(
-        inner: &Arc<Inner>,
-        symbol: &str,
-        q: longport::quote::PushQuote,
-    ) {
+    async fn on_quote_inner(inner: &Arc<Inner>, symbol: &str, q: longport::quote::PushQuote) {
         let stats: QuoteStats = q.into();
         inner.quote_stats.insert(symbol.to_string(), stats);
     }
@@ -247,11 +240,8 @@ impl LongPortConnector {
         let inner2 = inner.clone();
         tokio::spawn(async move {
             tracing::info!("LongPort consumer task started");
-            loop {
-                match receiver.recv().await {
-                    Some(event) => Self::handle_push_event(&inner2, event).await,
-                    None => break,
-                }
+            while let Some(event) = receiver.recv().await {
+                Self::handle_push_event(&inner2, event).await;
             }
             tracing::info!("LongPort consumer task stopped");
             inner2
@@ -262,11 +252,7 @@ impl LongPortConnector {
         Ok(())
     }
 
-    async fn on_trade_inner(
-        inner: &Arc<Inner>,
-        symbol: &str,
-        t: longport::quote::PushTrades,
-    ) {
+    async fn on_trade_inner(inner: &Arc<Inner>, symbol: &str, t: longport::quote::PushTrades) {
         let provider_id = inner.settings.provider_id;
         let mid_price = inner
             .local_books
@@ -292,11 +278,7 @@ impl LongPortConnector {
         }
     }
 
-    async fn on_brokers_inner(
-        inner: &Arc<Inner>,
-        symbol: &str,
-        b: longport::quote::PushBrokers,
-    ) {
+    async fn on_brokers_inner(inner: &Arc<Inner>, symbol: &str, b: longport::quote::PushBrokers) {
         let book_for_publish = {
             let Some(mut book_ref) = inner.local_books.get_mut(symbol) else {
                 return; // No depth yet — brokers cannot be merged.
@@ -323,19 +305,13 @@ impl LongPortConnector {
         }
     }
 
-    async fn on_depth_inner(
-        inner: &Arc<Inner>,
-        symbol: &str,
-        d: longport::quote::PushDepth,
-    ) {
+    async fn on_depth_inner(inner: &Arc<Inner>, symbol: &str, d: longport::quote::PushDepth) {
         let settings = &inner.settings;
         let provider_id = settings.provider_id;
 
         // Preserve existing broker_ids per price level before replacing.
-        let mut broker_map: std::collections::HashMap<
-            rust_decimal::Decimal,
-            Vec<i32>,
-        > = std::collections::HashMap::new();
+        let mut broker_map: std::collections::HashMap<rust_decimal::Decimal, Vec<i32>> =
+            std::collections::HashMap::new();
         if let Some(book) = inner.local_books.get(symbol) {
             for item in book.bids.iter().chain(book.asks.iter()) {
                 if !item.broker_ids.is_empty() {
@@ -355,9 +331,7 @@ impl LongPortConnector {
         for depth in d.bids {
             if let Some(price) = depth.price {
                 let size = rust_decimal::Decimal::from(depth.volume);
-                let mut item = rushhft_core::BookItem::new(
-                    price, size, true, symbol, provider_id,
-                );
+                let mut item = rushhft_core::BookItem::new(price, size, true, symbol, provider_id);
                 if let Some(brokers) = broker_map.get(&price) {
                     item.broker_ids = brokers.clone();
                 }
@@ -367,9 +341,7 @@ impl LongPortConnector {
         for depth in d.asks {
             if let Some(price) = depth.price {
                 let size = rust_decimal::Decimal::from(depth.volume);
-                let mut item = rushhft_core::BookItem::new(
-                    price, size, false, symbol, provider_id,
-                );
+                let mut item = rushhft_core::BookItem::new(price, size, false, symbol, provider_id);
                 if let Some(brokers) = broker_map.get(&price) {
                     item.broker_ids = brokers.clone();
                 }
@@ -415,12 +387,11 @@ impl rushhft_core::plugin::Plugin for LongPortConnector {
         &self,
         ctx: Arc<dyn rushhft_core::plugin::PluginContext>,
     ) -> Result<(), rushhft_core::PluginError> {
-        use rushhft_core::model::provider::Provider;
         use rushhft_core::model::enums::SessionStatus;
+        use rushhft_core::model::provider::Provider;
 
         let cur = **self.inner.status.load();
-        if cur == rushhft_core::PluginStatus::Started
-            || cur == rushhft_core::PluginStatus::Starting
+        if cur == rushhft_core::PluginStatus::Started || cur == rushhft_core::PluginStatus::Starting
         {
             return Err(rushhft_core::PluginError::AlreadyRunning(
                 self.name().to_string(),
@@ -487,8 +458,8 @@ impl rushhft_core::plugin::Plugin for LongPortConnector {
     }
 
     async fn stop(&self) -> Result<(), rushhft_core::PluginError> {
-        use rushhft_core::model::provider::Provider;
         use rushhft_core::model::enums::SessionStatus;
+        use rushhft_core::model::provider::Provider;
 
         self.inner
             .status
@@ -544,12 +515,14 @@ mod tests {
 
     #[test]
     fn from_settings_maps_core_fields() {
-        let mut core = rushhft_core::Settings::default();
-        core.app_key = "key".into();
-        core.app_secret = "secret".into();
-        core.access_token = "tok".into();
-        core.default_symbols = vec!["700.HK".into(), "AAPL.US".into()];
-        core.depth_levels = 20;
+        let core = rushhft_core::Settings {
+            app_key: "key".into(),
+            app_secret: "secret".into(),
+            access_token: "tok".into(),
+            default_symbols: vec!["700.HK".into(), "AAPL.US".into()],
+            depth_levels: 20,
+            ..Default::default()
+        };
         let cs = ConnectorSettings::from_settings(&core);
         assert_eq!(cs.app_key, "key");
         assert_eq!(cs.access_token, "tok");
@@ -623,8 +596,8 @@ mod tests {
     }
 
     use async_trait::async_trait;
-    use rushhft_core::plugin::PluginContext;
     use rushhft_core::Plugin;
+    use rushhft_core::plugin::PluginContext;
     use rushhft_core::{
         hub::{OrderBookHub, ProviderHub, TradeHub},
         model::provider::Provider,
@@ -666,11 +639,24 @@ mod tests {
             self.published_providers.lock().unwrap().push(p);
         }
         async fn register_metric(
-            &self, _: &str, _: &str, _: &str, _: &str, _: Decimal, _: OffsetDateTime,
-        ) {}
-        fn order_book_hub(&self) -> Arc<OrderBookHub> { self.ob_hub.clone() }
-        fn trade_hub(&self) -> Arc<TradeHub> { self.t_hub.clone() }
-        fn provider_hub(&self) -> Arc<ProviderHub> { self.p_hub.clone() }
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: Decimal,
+            _: OffsetDateTime,
+        ) {
+        }
+        fn order_book_hub(&self) -> Arc<OrderBookHub> {
+            self.ob_hub.clone()
+        }
+        fn trade_hub(&self) -> Arc<TradeHub> {
+            self.t_hub.clone()
+        }
+        fn provider_hub(&self) -> Arc<ProviderHub> {
+            self.p_hub.clone()
+        }
     }
 
     fn test_connector() -> LongPortConnector {
@@ -966,8 +952,7 @@ mod tests {
                 trades: vec![longport::quote::Trade {
                     price: dec!(100.00),
                     volume: 50,
-                    timestamp: time::OffsetDateTime::from_unix_timestamp(1_700_000_000)
-                        .unwrap(),
+                    timestamp: time::OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap(),
                     trade_type: "".to_string(),
                     direction: longport::quote::TradeDirection::Neutral,
                     trade_session: longport::quote::TradeSession::Intraday,
@@ -999,8 +984,7 @@ mod tests {
                 open: dec!(345.00),
                 high: dec!(352.00),
                 low: dec!(344.00),
-                timestamp: time::OffsetDateTime::from_unix_timestamp(1_700_000_000)
-                    .unwrap(),
+                timestamp: time::OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap(),
                 volume: 1_000_000,
                 turnover: dec!(350_000_000),
                 trade_status: longport::quote::TradeStatus::Normal,
