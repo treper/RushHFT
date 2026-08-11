@@ -167,7 +167,7 @@ impl RollingWindowF64 {
             .collect();
         v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let mid = v.len() / 2;
-        if v.len() % 2 == 0 {
+        if v.len().is_multiple_of(2) {
             Some((v[mid - 1] + v[mid]) / 2.0)
         } else {
             Some(v[mid])
@@ -205,5 +205,15 @@ mod tests_f64 {
             rw.push(v);
         }
         assert!((rw.median().unwrap() - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn median_even_count_averages_middle_two() {
+        let mut rw = RollingWindowF64::new(4);
+        for v in [10.0, 20.0, 30.0, 40.0] {
+            rw.push(v);
+        }
+        // Even count: median = (20 + 30) / 2 = 25
+        assert!((rw.median().unwrap() - 25.0).abs() < 1e-9);
     }
 }
