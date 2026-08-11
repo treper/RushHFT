@@ -134,6 +134,7 @@ async fn main() {
             commands::get_providers,
             commands::get_symbols,
             commands::get_studies,
+            commands::get_plugin_descriptors,
             commands::start_plugin,
             commands::stop_plugin,
             commands::get_settings,
@@ -143,6 +144,9 @@ async fn main() {
             commands::delete_trigger,
             commands::test_trigger_rest,
             commands::subscribe_notifications,
+            commands::get_chart_series,
+            commands::subscribe_chart_series,
+            commands::get_multi_venue_prices,
         ])
         .setup(move |_app| {
             let plugins_inner = plugins_for_setup.clone();

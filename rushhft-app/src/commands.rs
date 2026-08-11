@@ -343,6 +343,113 @@ pub async fn subscribe_notifications(
     Ok(())
 }
 
+pub async fn get_chart_series_inner(
+    state: &AppState,
+    symbol: &str,
+    kind: &str,
+    points: usize,
+) -> crate::dto::ChartSeriesDto {
+    crate::dto::ChartSeriesDto {
+        kind: kind.to_string(),
+        points: state.snapshot_store.chart_series(symbol, kind, points),
+    }
+}
+
+#[tauri::command]
+pub async fn get_chart_series(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+    kind: String,
+    points: usize,
+) -> Result<crate::dto::ChartSeriesDto, String> {
+    Ok(get_chart_series_inner(&state, &symbol, &kind, points).await)
+}
+
+#[tauri::command]
+pub async fn subscribe_chart_series(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+    channel: tauri::ipc::Channel<crate::dto::ChartSeriesDto>,
+) -> Result<(), String> {
+    // MVP: poll-based fallback. Channel push deferred to a follow-up task.
+    // Spawn a lightweight 250ms poller that pushes the latest series.
+    let store = state.snapshot_store.clone();
+    tokio::spawn(async move {
+        let mut last_t: i64 = 0;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let pts = store.chart_series(&symbol, "price", 1);
+            if let Some(p) = pts.last() {
+                if p.t > last_t {
+                    last_t = p.t;
+                    let _ = channel.send(crate::dto::ChartSeriesDto {
+                        kind: "price".into(),
+                        points: vec![p.clone()],
+                    });
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+pub async fn get_multi_venue_prices_inner(
+    state: &AppState,
+    symbol: &str,
+) -> Vec<crate::dto::VenuePriceDto> {
+    let snap = match state.snapshot_store.snapshot(symbol) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let bid = snap.bids.first().map(|b| b.price).unwrap_or(Decimal::ZERO);
+    let ask = snap.asks.first().map(|a| a.price).unwrap_or(Decimal::ZERO);
+    let last = snap
+        .quote_stats
+        .as_ref()
+        .map(|q| q.last_done)
+        .unwrap_or(Decimal::ZERO);
+    vec![crate::dto::VenuePriceDto {
+        venue: "LongPort".into(),
+        bid,
+        ask,
+        last,
+        timestamp: snap.last_updated,
+    }]
+}
+
+#[tauri::command]
+pub async fn get_multi_venue_prices(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+) -> Result<Vec<crate::dto::VenuePriceDto>, String> {
+    Ok(get_multi_venue_prices_inner(&state, &symbol).await)
+}
+
+pub async fn get_plugin_descriptors_inner(
+    state: &AppState,
+) -> Vec<crate::dto::PluginDescriptorDto> {
+    state
+        .plugins
+        .iter()
+        .map(|p| crate::dto::PluginDescriptorDto {
+            plugin_id: p.plugin_id().to_string(),
+            name: p.name().to_string(),
+            version: p.version().to_string(),
+            description: p.description().to_string(),
+            plugin_type: map_plugin_type(p.plugin_type()),
+            status: map_plugin_status(p.status()),
+            emits_metric: p.emits_metric(),
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn get_plugin_descriptors(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<crate::dto::PluginDescriptorDto>, String> {
+    Ok(get_plugin_descriptors_inner(&state).await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,5 +623,31 @@ mod tests {
         let rules = get_triggers_inner(&state).await;
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].rule_id, 2);
+    }
+
+    #[tokio::test]
+    async fn get_chart_series_returns_empty_for_unknown_symbol() {
+        let state = make_state(vec![]);
+        let dto = get_chart_series_inner(&state, "NOPE.HK", "spread", 100).await;
+        assert!(dto.points.is_empty());
+        assert_eq!(dto.kind, "spread");
+    }
+
+    #[tokio::test]
+    async fn get_multi_venue_prices_single_venue_stub() {
+        let state = make_state(vec![]);
+        let prices = get_multi_venue_prices_inner(&state, "700.HK").await;
+        // Single-venue (LongPort only) — returns empty vec when no book.
+        assert!(prices.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_plugin_descriptors_lists_all_plugins() {
+        use rushhft_studies::{VpinSettings, VpinStudy};
+        let vpin = Arc::new(VpinStudy::new(VpinSettings::default()));
+        let state = make_state(vec![vpin]);
+        let descs = get_plugin_descriptors_inner(&state).await;
+        assert_eq!(descs.len(), 1);
+        assert_eq!(descs[0].name, "VPIN Study");
     }
 }
