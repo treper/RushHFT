@@ -173,6 +173,40 @@ impl LongPortConnector {
         Self::on_brokers_inner(&self.inner, symbol, b).await;
     }
 
+    pub async fn on_trade(&self, symbol: &str, t: longport::quote::PushTrades) {
+        Self::on_trade_inner(&self.inner, symbol, t).await;
+    }
+
+    async fn on_trade_inner(
+        inner: &Arc<Inner>,
+        symbol: &str,
+        t: longport::quote::PushTrades,
+    ) {
+        let provider_id = inner.settings.provider_id;
+        let mid_price = inner
+            .local_books
+            .get(symbol)
+            .and_then(|b| b.mid_price())
+            .unwrap_or(rust_decimal::Decimal::ZERO);
+
+        let ctx = { inner.ctx.lock().await.clone() };
+        let Some(ctx) = ctx else { return };
+
+        for trade in t.trades {
+            let normalized = rushhft_core::Trade {
+                price: trade.price,
+                size: rust_decimal::Decimal::from(trade.volume),
+                timestamp: trade.timestamp,
+                direction: map_trade_direction(trade.direction),
+                trade_type: trade.trade_type,
+                symbol: symbol.to_string(),
+                provider_id,
+                market_mid_price: mid_price,
+            };
+            ctx.publish_trade(normalized).await;
+        }
+    }
+
     async fn on_brokers_inner(
         inner: &Arc<Inner>,
         symbol: &str,
@@ -627,5 +661,107 @@ mod tests {
         let book = c.local_book("700.HK").unwrap();
         assert_eq!(book.asks[0].size, dec!(600)); // volume updated
         assert_eq!(book.asks[0].broker_ids, vec![1001, 1002]); // brokers preserved
+    }
+
+    #[tokio::test]
+    async fn on_trade_maps_push_trades_and_uses_local_mid_price() {
+        use rust_decimal_macros::dec;
+        let c = test_connector();
+        let ctx = Arc::new(MockCtx::new());
+        c.inner
+            .ctx
+            .lock()
+            .await
+            .replace(ctx.clone() as Arc<dyn PluginContext>);
+
+        // Push a depth so mid_price is known.
+        c.on_depth(
+            "700.HK",
+            longport::quote::PushDepth {
+                asks: vec![longport::quote::Depth {
+                    position: 1,
+                    price: Some(dec!(100.60)),
+                    volume: 400,
+                    order_num: 4,
+                }],
+                bids: vec![longport::quote::Depth {
+                    position: 1,
+                    price: Some(dec!(100.50)),
+                    volume: 500,
+                    order_num: 5,
+                }],
+            },
+        )
+        .await;
+        // mid_price = (100.50 + 100.60) / 2 = 100.55
+
+        c.on_trade(
+            "700.HK",
+            longport::quote::PushTrades {
+                trades: vec![
+                    longport::quote::Trade {
+                        price: dec!(100.55),
+                        volume: 200,
+                        timestamp: time::OffsetDateTime::from_unix_timestamp(1_700_000_000)
+                            .unwrap(),
+                        trade_type: "D".to_string(),
+                        direction: longport::quote::TradeDirection::Up,
+                        trade_session: longport::quote::TradeSession::Intraday,
+                    },
+                    longport::quote::Trade {
+                        price: dec!(100.52),
+                        volume: 100,
+                        timestamp: time::OffsetDateTime::from_unix_timestamp(1_700_000_001)
+                            .unwrap(),
+                        trade_type: "".to_string(),
+                        direction: longport::quote::TradeDirection::Down,
+                        trade_session: longport::quote::TradeSession::Intraday,
+                    },
+                ],
+            },
+        )
+        .await;
+
+        let trades = ctx.published_trades.lock().unwrap().clone();
+        assert_eq!(trades.len(), 2);
+        assert_eq!(trades[0].price, dec!(100.55));
+        assert_eq!(trades[0].size, dec!(200));
+        assert_eq!(trades[0].direction, rushhft_core::TradeDirection::Up);
+        assert_eq!(trades[0].trade_type, "D");
+        assert_eq!(trades[0].market_mid_price, dec!(100.55));
+        assert_eq!(trades[1].direction, rushhft_core::TradeDirection::Down);
+        assert_eq!(trades[1].size, dec!(100));
+    }
+
+    #[tokio::test]
+    async fn on_trade_with_no_local_book_uses_zero_mid_price() {
+        use rust_decimal_macros::dec;
+        let c = test_connector();
+        let ctx = Arc::new(MockCtx::new());
+        c.inner
+            .ctx
+            .lock()
+            .await
+            .replace(ctx.clone() as Arc<dyn PluginContext>);
+
+        c.on_trade(
+            "700.HK",
+            longport::quote::PushTrades {
+                trades: vec![longport::quote::Trade {
+                    price: dec!(100.00),
+                    volume: 50,
+                    timestamp: time::OffsetDateTime::from_unix_timestamp(1_700_000_000)
+                        .unwrap(),
+                    trade_type: "".to_string(),
+                    direction: longport::quote::TradeDirection::Neutral,
+                    trade_session: longport::quote::TradeSession::Intraday,
+                }],
+            },
+        )
+        .await;
+
+        let trades = ctx.published_trades.lock().unwrap().clone();
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].market_mid_price, dec!(0));
     }
 }
