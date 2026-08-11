@@ -379,14 +379,14 @@ pub async fn subscribe_chart_series(
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             let pts = store.chart_series(&symbol, "price", 1);
-            if let Some(p) = pts.last() {
-                if p.t > last_t {
-                    last_t = p.t;
-                    let _ = channel.send(crate::dto::ChartSeriesDto {
-                        kind: "price".into(),
-                        points: vec![p.clone()],
-                    });
-                }
+            if let Some(p) = pts.last()
+                .filter(|p| p.t > last_t)
+            {
+                last_t = p.t;
+                let _ = channel.send(crate::dto::ChartSeriesDto {
+                    kind: "price".into(),
+                    points: vec![p.clone()],
+                });
             }
         }
     });
