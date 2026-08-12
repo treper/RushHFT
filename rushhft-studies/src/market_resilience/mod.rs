@@ -109,14 +109,13 @@ impl Plugin for MarketResilienceStudy {
         }
 
         let inner_for_base = self.inner.clone();
-        let inner_for_closure = self.inner.clone();
         let ctx_for_consumer = ctx.clone();
         tokio::spawn(async move {
             inner_for_base
                 .base
                 .start_consumer(move |item: &BaseStudyModel| {
                     let ctx = ctx_for_consumer.clone();
-                    let symbol = inner_for_closure.settings.symbol.clone();
+                    let symbol = ctx.current_symbol();
                     let value = item.value;
                     let ts = item.timestamp;
                     tokio::spawn(async move {
@@ -136,9 +135,10 @@ impl Plugin for MarketResilienceStudy {
         });
 
         let inner_ob = self.inner.clone();
+        let ctx_for_ob = ctx.clone();
         let ob_hub = ctx.order_book_hub();
         let ob_guard = ob_hub.subscribe(Arc::new(move |ob: &OrderBook| {
-            if ob.symbol != inner_ob.settings.symbol
+            if ob.symbol != ctx_for_ob.current_symbol()
                 || ob.provider_id != inner_ob.settings.provider_id
             {
                 return;
@@ -159,6 +159,7 @@ impl Plugin for MarketResilienceStudy {
             let m = calc.metrics();
             let value = Decimal::from_f64_retain(m.spread_recovery_ms.unwrap_or(0.0))
                 .unwrap_or(Decimal::ZERO);
+            let is_stale = m.spread_recovery_ms.is_none();
             inner_ob.base.add_calculation(BaseStudyModel {
                 value,
                 format: "N0".into(),
@@ -167,7 +168,7 @@ impl Plugin for MarketResilienceStudy {
                 value_color: "White".into(),
                 tooltip: String::new(),
                 has_error: false,
-                is_stale: m.spread_recovery_ms.is_none(),
+                is_stale,
             });
         }));
 

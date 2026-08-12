@@ -45,6 +45,7 @@ pub trait PluginContext: Send + Sync {
     fn order_book_hub(&self) -> Arc<OrderBookHub>;
     fn trade_hub(&self) -> Arc<TradeHub>;
     fn provider_hub(&self) -> Arc<ProviderHub>;
+    fn current_symbol(&self) -> String;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -145,6 +146,9 @@ mod tests {
         }
         fn provider_hub(&self) -> Arc<ProviderHub> {
             self.p_hub.clone()
+        }
+        fn current_symbol(&self) -> String {
+            String::new()
         }
     }
 

@@ -174,6 +174,9 @@ mod tests {
         fn provider_hub(&self) -> Arc<ProviderHub> {
             Arc::new(ProviderHub::new())
         }
+        fn current_symbol(&self) -> String {
+            "700.HK".to_string()
+        }
     }
 
     #[tokio::test]

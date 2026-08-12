@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
   import { currentSymbol, loadSymbols } from '$lib/stores/symbols';
   import { startPolling, stopPolling } from '$lib/stores/snapshot';
   import { subscribeNotifications } from '$lib/stores/notifications';
@@ -24,6 +25,7 @@
   $effect(() => {
     const sym = $currentSymbol;
     if (!sym) return;
+    invoke('set_current_symbol', { symbol: sym }).catch(() => {});
     startPolling(sym);
     return () => stopPolling();
   });

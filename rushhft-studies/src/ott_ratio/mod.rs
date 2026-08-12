@@ -88,14 +88,13 @@ impl Plugin for OttRatioStudy {
             *g = Some(ctx.clone());
         }
         let inner = self.inner.clone();
-        let inner_closure = self.inner.clone();
         let ctx_for_consumer = ctx.clone();
         tokio::spawn(async move {
             inner
                 .base
                 .start_consumer(move |item: &BaseStudyModel| {
                     let ctx = ctx_for_consumer.clone();
-                    let symbol = inner_closure.settings.symbol.clone();
+                    let symbol = ctx.current_symbol();
                     let value = item.value;
                     let ts = item.timestamp;
                     tokio::spawn(async move {
@@ -108,12 +107,14 @@ impl Plugin for OttRatioStudy {
         });
 
         let inner_ob = self.inner.clone();
+        let ctx_for_ob = ctx.clone();
         let inner_trade = self.inner.clone();
+        let ctx_for_trade = ctx.clone();
         let ob_hub = ctx.order_book_hub();
         let trade_hub = ctx.trade_hub();
 
         let ob_guard = ob_hub.subscribe(Arc::new(move |ob: &OrderBook| {
-            if ob.symbol != inner_ob.settings.symbol
+            if ob.symbol != ctx_for_ob.current_symbol()
                 || ob.provider_id != inner_ob.settings.provider_id
             {
                 return;
@@ -135,7 +136,7 @@ impl Plugin for OttRatioStudy {
 
         use rushhft_core::model::trade::Trade;
         let trade_guard = trade_hub.subscribe(Arc::new(move |t: &Trade| {
-            if t.symbol != inner_trade.settings.symbol
+            if t.symbol != ctx_for_trade.current_symbol()
                 || t.provider_id != inner_trade.settings.provider_id
             {
                 return;

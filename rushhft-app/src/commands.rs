@@ -21,6 +21,7 @@ pub struct AppState {
     pub notification_hub: Arc<crate::notification::NotificationHub>,
     pub user_symbols: Arc<crate::ui_state::UserSymbols>,
     pub connector: Option<Arc<rushhft_connector_longport::LongPortConnector>>,
+    pub current_symbol: Arc<RwLock<String>>,
 }
 
 impl AppState {
@@ -468,6 +469,11 @@ pub async fn remove_symbol_inner(state: &AppState, symbol: &str) -> Result<(), S
     Ok(())
 }
 
+pub async fn set_current_symbol_inner(state: &AppState, symbol: &str) {
+    let mut g = state.current_symbol.write().await;
+    *g = symbol.to_string();
+}
+
 pub async fn list_user_symbols_inner(state: &AppState) -> Vec<String> {
     state.user_symbols.list().await
 }
@@ -485,6 +491,15 @@ pub async fn remove_symbol(
     remove_symbol_inner(&state, &symbol).await
 }
 
+#[tauri::command]
+pub async fn set_current_symbol(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+) -> Result<(), String> {
+    set_current_symbol_inner(&state, &symbol).await;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,6 +512,7 @@ mod tests {
         let trigger_engine = Arc::new(rushhft_core::TriggerEngine::new());
         let notification_hub = Arc::new(crate::notification::NotificationHub::new());
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<rushhft_core::MetricEvent>();
+        let current_symbol = Arc::new(RwLock::new("700.HK".to_string()));
         let ctx: Arc<dyn rushhft_core::plugin::PluginContext> =
             Arc::new(crate::context::PluginContextImpl::new(
                 ob_hub,
@@ -504,6 +520,7 @@ mod tests {
                 p_hub,
                 snapshot_store.clone(),
                 tx,
+                current_symbol.clone(),
             ));
         AppState {
             snapshot_store,
@@ -514,6 +531,7 @@ mod tests {
             notification_hub,
             user_symbols: Arc::new(crate::ui_state::UserSymbols::new()),
             connector: None,
+            current_symbol,
         }
     }
 

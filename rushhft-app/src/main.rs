@@ -77,6 +77,15 @@ async fn main() {
         });
     }
 
+    let settings_snapshot = settings.read().await.clone();
+    let first_symbol = settings_snapshot
+        .default_symbols
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "700.HK".to_string());
+
+    let current_symbol = Arc::new(RwLock::new(first_symbol.clone()));
+
     let plugin_context: Arc<dyn rushhft_core::plugin::PluginContext> =
         Arc::new(PluginContextImpl::new(
             ob_hub.clone(),
@@ -84,14 +93,8 @@ async fn main() {
             p_hub.clone(),
             snapshot_store.clone(),
             metric_tx,
+            current_symbol.clone(),
         ));
-
-    let settings_snapshot = settings.read().await.clone();
-    let first_symbol = settings_snapshot
-        .default_symbols
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "700.HK".to_string());
 
     let connector = Arc::new(LongPortConnector::new(ConnectorSettings::from_settings(
         &settings_snapshot,
@@ -141,6 +144,7 @@ async fn main() {
         notification_hub: notification_hub.clone(),
         user_symbols: Arc::new(ui_state::UserSymbols::new()),
         connector: Some(connector.clone()),
+        current_symbol,
     };
 
     // Spawn the TriggerEngine consumer.
@@ -173,6 +177,7 @@ async fn main() {
             commands::get_multi_venue_prices,
             commands::add_symbol,
             commands::remove_symbol,
+            commands::set_current_symbol,
         ])
         .setup(move |_app| {
             let plugins_inner = plugins_for_setup.clone();

@@ -704,6 +704,9 @@ mod tests {
         fn provider_hub(&self) -> Arc<ProviderHub> {
             self.p_hub.clone()
         }
+        fn current_symbol(&self) -> String {
+            "700.HK".to_string()
+        }
     }
 
     fn test_connector() -> LongPortConnector {

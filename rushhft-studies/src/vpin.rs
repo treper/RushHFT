@@ -131,14 +131,13 @@ impl Plugin for VpinStudy {
         // The BaseStudy is owned by Inner; we need two clones of Arc<Inner>:
         // one to keep alive for the .base reference, one to capture in the closure.
         let inner_for_base = self.inner.clone();
-        let inner_for_closure = self.inner.clone();
         let ctx_for_consumer = ctx.clone();
         tokio::spawn(async move {
             inner_for_base
                 .base
                 .start_consumer(move |item: &BaseStudyModel| {
                     let ctx = ctx_for_consumer.clone();
-                    let symbol = inner_for_closure.settings.symbol.clone();
+                    let symbol = ctx.current_symbol();
                     let value = item.value;
                     let ts = item.timestamp;
                     tokio::spawn(async move {
@@ -152,9 +151,10 @@ impl Plugin for VpinStudy {
 
         // 4) Subscribe to OrderBookHub
         let inner_ob = self.inner.clone();
+        let ctx_for_ob = ctx.clone();
         let ob_hub = ctx.order_book_hub();
         let ob_guard = ob_hub.subscribe(Arc::new(move |ob: &OrderBook| {
-            if ob.symbol != inner_ob.settings.symbol
+            if ob.symbol != ctx_for_ob.current_symbol()
                 || ob.provider_id != inner_ob.settings.provider_id
             {
                 return;
@@ -177,9 +177,11 @@ impl Plugin for VpinStudy {
 
         // 5) Subscribe to TradeHub
         let inner_t = self.inner.clone();
+        let ctx_for_t = ctx.clone();
         let t_hub = ctx.trade_hub();
         let t_guard = t_hub.subscribe(Arc::new(move |t: &Trade| {
-            if t.symbol != inner_t.settings.symbol || t.provider_id != inner_t.settings.provider_id
+            if t.symbol != ctx_for_t.current_symbol()
+                || t.provider_id != inner_t.settings.provider_id
             {
                 return;
             }
@@ -557,6 +559,9 @@ mod tests {
         }
         fn provider_hub(&self) -> Arc<ProviderHub> {
             self.p_hub.clone()
+        }
+        fn current_symbol(&self) -> String {
+            "700.HK".to_string()
         }
     }
 
