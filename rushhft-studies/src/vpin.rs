@@ -185,7 +185,22 @@ impl Plugin for VpinStudy {
             {
                 return;
             }
-            let is_buy = map_trade_direction(t.direction);
+            // Infer direction: use the feed's classification if available;
+            // otherwise apply the tick rule (Lee-Ready): price above mid
+            // = buy, below mid = sell, at mid = unclassifiable.
+            let is_buy = match map_trade_direction(t.direction) {
+                Some(b) => Some(b),
+                None if t.market_mid_price > Decimal::ZERO => {
+                    if t.price > t.market_mid_price {
+                        Some(true)
+                    } else if t.price < t.market_mid_price {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                }
+                None => None,
+            };
             let size = t.size;
             let mid = t.market_mid_price;
             let ts = t.timestamp;
