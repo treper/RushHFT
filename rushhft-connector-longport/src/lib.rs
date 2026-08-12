@@ -356,25 +356,59 @@ impl LongPortConnector {
         let settings = &inner.settings;
         let provider_id = settings.provider_id;
 
-        // Preserve existing broker_ids per price level before replacing.
-        let mut broker_map: std::collections::HashMap<rust_decimal::Decimal, Vec<i32>> =
-            std::collections::HashMap::new();
-        if let Some(book) = inner.local_books.get(symbol) {
-            for item in book.bids.iter().chain(book.asks.iter()) {
-                if !item.broker_ids.is_empty() {
-                    broker_map.insert(item.price, item.broker_ids.clone());
+        // Clone the existing book (preserving cumulative counters like
+        // added_levels/updated_levels/deleted_levels) so the OTT study sees
+        // correct deltas. If no existing book, create a fresh one.
+        let (mut book, broker_map) = match inner.local_books.get(symbol) {
+            Some(existing) => {
+                let mut bm: std::collections::HashMap<rust_decimal::Decimal, Vec<i32>> =
+                    std::collections::HashMap::new();
+                for item in existing.bids.iter().chain(existing.asks.iter()) {
+                    if !item.broker_ids.is_empty() {
+                        bm.insert(item.price, item.broker_ids.clone());
+                    }
                 }
+                (existing.clone(), bm)
             }
+            None => (
+                rushhft_core::OrderBook::new(
+                    symbol,
+                    settings.depth_levels,
+                    settings.price_decimal_places,
+                    settings.size_decimal_places,
+                    provider_id,
+                ),
+                std::collections::HashMap::new(),
+            ),
+        };
+
+        // Collect prices from the new data so we can detect deletions.
+        let new_bid_prices: std::collections::HashSet<rust_decimal::Decimal> =
+            d.bids.iter().filter_map(|b| b.price).collect();
+        let new_ask_prices: std::collections::HashSet<rust_decimal::Decimal> =
+            d.asks.iter().filter_map(|a| a.price).collect();
+
+        // Delete levels that are in the old book but not in the new snapshot.
+        let bids_to_delete: Vec<rust_decimal::Decimal> = book
+            .bids
+            .iter()
+            .filter(|b| !new_bid_prices.contains(&b.price))
+            .map(|b| b.price)
+            .collect();
+        for price in bids_to_delete {
+            book.delete_level(price, true);
+        }
+        let asks_to_delete: Vec<rust_decimal::Decimal> = book
+            .asks
+            .iter()
+            .filter(|a| !new_ask_prices.contains(&a.price))
+            .map(|a| a.price)
+            .collect();
+        for price in asks_to_delete {
+            book.delete_level(price, false);
         }
 
-        let mut book = rushhft_core::OrderBook::new(
-            symbol,
-            settings.depth_levels,
-            settings.price_decimal_places,
-            settings.size_decimal_places,
-            provider_id,
-        );
-
+        // Add or update levels from the new snapshot.
         for depth in d.bids {
             if let Some(price) = depth.price {
                 let size = rust_decimal::Decimal::from(depth.volume);

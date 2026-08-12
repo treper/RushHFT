@@ -157,12 +157,14 @@ impl Plugin for MarketResilienceStudy {
             let mut calc = inner_ob.calc.lock().unwrap();
             calc.observe(spread, bid_depth, ask_depth, OffsetDateTime::now_utc());
             let m = calc.metrics();
-            let value = Decimal::from_f64_retain(m.spread_recovery_ms.unwrap_or(0.0))
-                .unwrap_or(Decimal::ZERO);
+            // Show the current spread as the live value so the tile updates
+            // on every tick. Recovery time (rarely non-zero) is carried in
+            // the tooltip for completeness.
+            let value = ob.spread().unwrap_or(Decimal::ZERO);
             let is_stale = m.spread_recovery_ms.is_none();
             inner_ob.base.add_calculation(BaseStudyModel {
                 value,
-                format: "N0".into(),
+                format: "N4".into(),
                 timestamp: OffsetDateTime::now_utc(),
                 market_mid_price: ob.mid_price().unwrap_or(Decimal::ZERO),
                 value_color: "White".into(),

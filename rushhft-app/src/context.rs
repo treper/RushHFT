@@ -23,7 +23,7 @@ pub struct PluginContextImpl {
     snapshot_store: Arc<SnapshotStore>,
     // TriggerEngine handle — we hold a Sender for register_metric
     metric_tx: tokio::sync::mpsc::UnboundedSender<MetricEvent>,
-    current_symbol: Arc<tokio::sync::RwLock<String>>,
+    current_symbol: Arc<arc_swap::ArcSwap<String>>,
 }
 
 impl PluginContextImpl {
@@ -33,7 +33,7 @@ impl PluginContextImpl {
         p_hub: Arc<ProviderHub>,
         snapshot_store: Arc<SnapshotStore>,
         metric_tx: tokio::sync::mpsc::UnboundedSender<MetricEvent>,
-        current_symbol: Arc<tokio::sync::RwLock<String>>,
+        current_symbol: Arc<arc_swap::ArcSwap<String>>,
     ) -> Self {
         Self {
             ob_hub,
@@ -43,11 +43,6 @@ impl PluginContextImpl {
             metric_tx,
             current_symbol,
         }
-    }
-
-    pub async fn set_current_symbol(&self, symbol: &str) {
-        let mut g = self.current_symbol.write().await;
-        *g = symbol.to_string();
     }
 }
 
@@ -185,11 +180,7 @@ impl PluginContext for PluginContextImpl {
         self.p_hub.clone()
     }
     fn current_symbol(&self) -> String {
-        // try_read first to avoid an async await in a sync fn
-        match self.current_symbol.try_read() {
-            Ok(g) => g.clone(),
-            Err(_) => String::new(),
-        }
+        (**self.current_symbol.load()).clone()
     }
 }
 
@@ -233,7 +224,7 @@ mod tests {
         let p_hub = Arc::new(ProviderHub::new());
         let store = Arc::new(SnapshotStore::new());
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<MetricEvent>();
-        let current_symbol = Arc::new(tokio::sync::RwLock::new("700.HK".to_string()));
+        let current_symbol = Arc::new(arc_swap::ArcSwap::from_pointee("700.HK".to_string()));
         let ctx = Arc::new(PluginContextImpl::new(
             ob_hub,
             t_hub,

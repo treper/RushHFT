@@ -21,7 +21,7 @@ pub struct AppState {
     pub notification_hub: Arc<crate::notification::NotificationHub>,
     pub user_symbols: Arc<crate::ui_state::UserSymbols>,
     pub connector: Option<Arc<rushhft_connector_longport::LongPortConnector>>,
-    pub current_symbol: Arc<RwLock<String>>,
+    pub current_symbol: Arc<arc_swap::ArcSwap<String>>,
 }
 
 impl AppState {
@@ -470,8 +470,7 @@ pub async fn remove_symbol_inner(state: &AppState, symbol: &str) -> Result<(), S
 }
 
 pub async fn set_current_symbol_inner(state: &AppState, symbol: &str) {
-    let mut g = state.current_symbol.write().await;
-    *g = symbol.to_string();
+    state.current_symbol.store(Arc::new(symbol.to_string()));
 }
 
 pub async fn list_user_symbols_inner(state: &AppState) -> Vec<String> {
@@ -512,7 +511,7 @@ mod tests {
         let trigger_engine = Arc::new(rushhft_core::TriggerEngine::new());
         let notification_hub = Arc::new(crate::notification::NotificationHub::new());
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<rushhft_core::MetricEvent>();
-        let current_symbol = Arc::new(RwLock::new("700.HK".to_string()));
+        let current_symbol = Arc::new(arc_swap::ArcSwap::from_pointee("700.HK".to_string()));
         let ctx: Arc<dyn rushhft_core::plugin::PluginContext> =
             Arc::new(crate::context::PluginContextImpl::new(
                 ob_hub,

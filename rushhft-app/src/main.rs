@@ -84,7 +84,7 @@ async fn main() {
         .cloned()
         .unwrap_or_else(|| "700.HK".to_string());
 
-    let current_symbol = Arc::new(RwLock::new(first_symbol.clone()));
+    let current_symbol = Arc::new(arc_swap::ArcSwap::from_pointee(first_symbol.clone()));
 
     let plugin_context: Arc<dyn rushhft_core::plugin::PluginContext> =
         Arc::new(PluginContextImpl::new(
